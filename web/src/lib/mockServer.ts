@@ -7,7 +7,13 @@
  * exercised for real.
  */
 import type { EpisodeListRow, InboxStatusResult } from "../shared/protocol";
-import type { AppSettingsData, AskEvent, CaptureEcho, ChatMessage } from "../shared/api";
+import type {
+  AppSettingsData,
+  AskEvent,
+  CanvasDocument,
+  CaptureEcho,
+  ChatMessage,
+} from "../shared/api";
 import type { Backend, HealthPayload, PresignResult } from "./backend";
 
 const CAPABILITIES = {
@@ -67,6 +73,7 @@ let rows: EpisodeListRow[] = SEED_NOTES.map(([text, days]) => makeRow(text, days
 const trash: Array<{ row: EpisodeListRow; deletedAt: string }> = [];
 const spools = new Map<string, { text: string; state: "queued" | "done"; episodeId: string | null }>();
 const chatLog: ChatMessage[] = [];
+const canvases = new Map<string, { doc: CanvasDocument; etag: string }>();
 let settings: AppSettingsData = {
   provider: "app-key",
   rerank: true,
@@ -232,6 +239,32 @@ export const mockBackend: Backend = {
       batch: items.total > 0 ? items : null,
       last_receipts: receipts,
     });
+  },
+
+  canvasGet: async (collection) => {
+    const stored = canvases.get(collection);
+    return delay(
+      stored
+        ? { doc: stored.doc, etag: stored.etag }
+        : {
+            doc: {
+              version: 1 as const,
+              items: [],
+              shapes: [],
+              view: { x: 0, y: 0, zoom: 1 },
+            },
+            etag: null,
+          },
+    );
+  },
+
+  canvasSave: async (collection, doc, etag) => {
+    const stored = canvases.get(collection);
+    // Mirrors the service's optimistic-concurrency check.
+    if (stored && etag !== stored.etag) throw new Error("canvas changed elsewhere");
+    const next = `w/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    canvases.set(collection, { doc, etag: next });
+    return delay({ etag: next }, 40);
   },
 
   inboxDiscard: async (spoolId) => {

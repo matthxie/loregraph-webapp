@@ -24,6 +24,8 @@ import type {
 } from "../shared/protocol";
 import type {
   AppSettingsData,
+  CanvasDocument,
+  CanvasLoad,
   AskConversationMessage,
   AskEvent,
   Capabilities,
@@ -69,6 +71,8 @@ export interface Backend {
   capture(text: string, operationId?: string, attachmentIds?: string[]): Promise<CaptureEcho>;
   inboxStatus(spoolIds?: string[]): Promise<InboxStatusResult>;
   inboxDiscard(spoolId: string): Promise<InboxDiscardResult>;
+  canvasGet(collection: string): Promise<CanvasLoad>;
+  canvasSave(collection: string, doc: CanvasDocument, etag: string | null): Promise<{ etag: string }>;
   episodeDelete(id: string): Promise<void>;
   episodeReingest(
     id: string,
@@ -134,6 +138,13 @@ export const httpBackend: Backend = {
     request<InboxStatusResult>("/inbox/status", { query: { spool_ids: spoolIds?.join(",") } }),
   inboxDiscard: (spoolId) =>
     request<InboxDiscardResult>("/inbox/discard", { body: { spool_id: spoolId } }),
+  canvasGet: (collection) =>
+    request<CanvasLoad>(`/collections/${encodeURIComponent(collection)}/canvas`),
+  canvasSave: (collection, doc, etag) =>
+    request<{ etag: string }>(`/collections/${encodeURIComponent(collection)}/canvas`, {
+      method: "PUT",
+      body: { doc, etag },
+    }),
   episodeDelete: (id) =>
     request<void>(`/episodes/${encodeURIComponent(id)}`, { method: "DELETE" }),
   episodeReingest: (id, text, operationId, attachmentIds) =>

@@ -60,7 +60,9 @@ import { CardFolderPicker } from "../components/CardFolderPicker";
 import { CardFolders } from "../components/CardFolders";
 import { RichLinkPreview } from "../components/LinkPreview";
 import { spotCounts } from "../components/SpotsSidebar";
-import { CollectionsBoard } from "../components/CollectionsBoard";
+import { CollectionsBoard, episodesByFolder } from "../components/CollectionsBoard";
+import { CanvasBoard } from "../components/CanvasBoard";
+import { collectionKind, pruneKinds, useCollectionKinds } from "../lib/collectionKinds";
 import type { EpisodeEdit } from "../App";
 import type { PendingWriteEntry } from "./InputPage";
 
@@ -527,6 +529,7 @@ export function HistoryPage({
     pruneHiddenFolders(existing);
     pruneOnlyFolders(existing);
     pruneCovers(existing);
+    pruneKinds(existing);
   }, [spots]);
   // A folder exists until it is deleted. Every folder a card carries is recorded in the folder
   // list, so unfiling the last card (or deleting that card) leaves the folder behind, empty —
@@ -563,8 +566,51 @@ export function HistoryPage({
   const activeFolder = selectedSpots.length === 1 ? selectedSpots[0] ?? null : null;
   /** The collection being viewed, when the Collections tab has drilled into one. */
   const openCollection = tab === "collections" ? activeFolder : null;
+  const collectionKinds = useCollectionKinds();
+  /** An opened canvas collection lays its saves out itself, so the note boards stand down. */
+  const openCanvas = openCollection && collectionKind(openCollection, collectionKinds) === "canvas"
+    ? openCollection
+    : null;
+  /** Ids the tag map has filed into the open canvas — some may be stale (see below). */
+  const filedInCanvas = useMemo(
+    () => (openCanvas ? episodesByFolder(displayTags).get(openCanvas) ?? [] : []),
+    [openCanvas, displayTags],
+  );
+  const [canvasRows, setCanvasRows] = useState<Map<string, EpisodeListRow>>(new Map());
+  /** Ids we have already asked the service about, so a miss can be told from a pending fetch. */
+  const canvasAsked = useRef(new Set<string>());
+  useEffect(() => {
+    const missing = filedInCanvas.filter((id) => !canvasRows.has(id) && !canvasAsked.current.has(id));
+    if (missing.length === 0) return;
+    missing.forEach((id) => canvasAsked.current.add(id));
+    // No cancel-on-cleanup: this effect re-runs the moment a filing migrates off its provisional
+    // id, and aborting the in-flight fetch would strand the new note — it is already marked
+    // asked, so nothing would ever fetch it again. The result is purely additive.
+    void window.graph
+      .episodesByIds(missing)
+      .then((page) => {
+        setCanvasRows((current) => {
+          const next = new Map(current);
+          for (const row of page.episodes) next.set(row.id, row);
+          return next;
+        });
+      })
+      .catch(() => {
+        missing.forEach((id) => canvasAsked.current.delete(id)); // a failure must be retryable
+      });
+  }, [filedInCanvas, canvasRows]);
+
+  /**
+   * Only place ids that resolved to a real note. A filing recorded under the composer's
+   * provisional id and never reconciled would otherwise sit on the canvas as a blank card
+   * forever — the board holds a sample, so the orphan reconciler can never prune it.
+   */
+  const canvasEpisodeIds = useMemo(
+    () => filedInCanvas.filter((id) => canvasRows.has(id) || !canvasAsked.current.has(id)),
+    [filedInCanvas, canvasRows],
+  );
   /** The notes boards render on the feed, and inside an opened collection. */
-  const showNotes = tab === "feed" || openCollection !== null;
+  const showNotes = tab === "feed" || (openCollection !== null && openCanvas === null);
   useEffect(() => {
     onActiveFolderChange?.(activeFolder);
   }, [activeFolder, onActiveFolderChange]);
@@ -674,7 +720,15 @@ export function HistoryPage({
   const announcedEpisodeIdsRef = useRef(new Set<string>());
   useEffect(() => {
     for (const entry of pendingEntries) {
-      if (entry.episodeId) announcedEpisodeIdsRef.current.add(entry.episodeId);
+      if (!entry.episodeId) continue;
+      announcedEpisodeIdsRef.current.add(entry.episodeId);
+      // Claim the filing here rather than waiting for the row: the board holds a shuffled
+      // sample, so a new note usually never appears in `rows`. The announced episode id is the
+      // real one, and the shield above keeps it from being pruned before the board meets it.
+      const spots = takePendingFiling(entry.text.trim());
+      if (!spots) continue;
+      const episodeId = entry.episodeId;
+      updateUserTags((map) => spots.reduce((next, name) => addUserTag(next, episodeId, name), map));
     }
   }, [pendingEntries]);
 
@@ -1385,6 +1439,14 @@ export function HistoryPage({
           </button>
           <h2 className="collection-title">{openCollection}</h2>
         </div>
+      )}
+      {openCanvas && (
+        <CanvasBoard
+          collection={openCanvas}
+          episodeIds={canvasEpisodeIds}
+          rows={canvasRows}
+          tags={displayTags}
+        />
       )}
       {error && <p className="error-text" style={{ padding: "12px 24px" }}>{error}</p>}
       {!engineRunning && !error && <p className="muted" style={{ padding: "12px 24px" }}>Waiting for the engine…</p>}

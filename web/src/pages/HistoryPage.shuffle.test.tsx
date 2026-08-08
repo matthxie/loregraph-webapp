@@ -42,11 +42,16 @@ describe("HistoryPage shuffled board", () => {
         disconnect() {}
       },
     });
-    // Answer like the service: honour limit, and make the sample a function of the seed.
+    // Answer like the service: honour limit, and make the sample a stable function of the
+    // seed. Rotations are handed out per distinct seed, so two seeds never collide onto the
+    // same sample and the re-roll assertion can't flake.
+    const offsets = new Map<string, number>();
     episodesList = vi.fn(async (params: { limit?: number; shuffle?: boolean; seed?: string } = {}) => {
       const limit = params.limit ?? 200;
       if (!params.shuffle) return { episodes: ALL.slice(0, limit), total: ALL.length };
-      const offset = [...(params.seed ?? "")].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % ALL.length;
+      const seed = params.seed ?? "";
+      if (!offsets.has(seed)) offsets.set(seed, (offsets.size * 7 + 3) % ALL.length);
+      const offset = offsets.get(seed) ?? 0;
       const rotated = [...ALL.slice(offset), ...ALL.slice(0, offset)];
       return { episodes: rotated.slice(0, limit), total: ALL.length };
     });

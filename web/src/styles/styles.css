@@ -7272,3 +7272,196 @@ body.is-windows .notes-history-toolbar {
   font-weight: 590;
   letter-spacing: -0.01em;
 }
+
+/* ---------------------------------------------------------------------------
+   Canvas collections.
+   --------------------------------------------------------------------------- */
+
+.collection-card-kind {
+  align-self: center;
+  padding: 2px 8px;
+  border-radius: var(--squircle-pill);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 590;
+  letter-spacing: 0.01em;
+}
+
+.collection-card.has-cover .collection-card-kind {
+  background: color-mix(in srgb, #fff 24%, transparent);
+  color: #fff;
+}
+
+.collection-kind-picker {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--squircle-pill);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.collection-kind-picker button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--squircle-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 590;
+  cursor: pointer;
+}
+
+.collection-kind-picker button.active {
+  background: var(--memory-card-bg);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+}
+
+.canvas-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 24px 24px;
+}
+
+.canvas-tools {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border-radius: var(--squircle-pill);
+  background: var(--memory-card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.canvas-tool {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  place-items: center;
+}
+
+.canvas-tool svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.canvas-tool.select svg,
+.canvas-tool[aria-label="Select"] svg {
+  fill: currentColor;
+  stroke: none;
+}
+
+.canvas-tool:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.canvas-tool.active {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.canvas-tools-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--separator);
+}
+
+.canvas-swatch {
+  width: 18px;
+  height: 18px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.canvas-swatch.active {
+  border-color: var(--text);
+}
+
+.canvas-error {
+  align-self: center;
+}
+
+/* The scroll container for the whole canvas. Fixed height so the board doesn't grow the page;
+   panning moves the content, not the scrollbar. */
+.canvas-surface {
+  position: relative;
+  height: calc(100vh - var(--window-header-height) - 210px);
+  min-height: 320px;
+  border: 1px solid var(--separator);
+  border-radius: var(--squircle-md);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 13%, transparent) 1px, transparent 0)
+    0 0 / 22px 22px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.canvas-surface.tool-line,
+.canvas-surface.tool-arrow,
+.canvas-surface.tool-rect,
+.canvas-surface.tool-ellipse {
+  cursor: crosshair;
+}
+
+.canvas-content {
+  position: absolute;
+  inset: 0;
+}
+
+/* overflow:visible lets shapes drawn outside the viewport still paint; the surface clips. */
+.canvas-shapes {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-shape.selected {
+  stroke-dasharray: 6 4;
+}
+
+.canvas-card {
+  position: absolute;
+  border-radius: var(--squircle-sm);
+  background: var(--memory-card-bg);
+  box-shadow: var(--shadow-card);
+  cursor: grab;
+  user-select: none;
+}
+
+.canvas-card:active {
+  cursor: grabbing;
+}
+
+.canvas-card-body {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.canvas-hint {
+  align-self: center;
+  font-size: 12px;
+}
+
+.canvas-loading {
+  padding: 24px;
+  text-align: center;
+}

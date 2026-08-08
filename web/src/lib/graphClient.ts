@@ -335,6 +335,8 @@ export const graphClient: CebApi = {
   episodesByIds: (ids) => backend.episodesByIds(ids),
   inboxStatus: (spoolIds) => backend.inboxStatus(spoolIds),
   inboxDiscard: (spoolId) => backend.inboxDiscard(spoolId),
+  canvasGet: (collection) => backend.canvasGet(collection),
+  canvasSave: (collection, doc, etag) => backend.canvasSave(collection, doc, etag),
 
   async capture(text, operationId, attachmentIds) {
     const echo = await backend.capture(text, operationId, attachmentIds);

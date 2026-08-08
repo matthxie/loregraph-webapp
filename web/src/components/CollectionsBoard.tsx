@@ -7,6 +7,8 @@ import type { EpisodeListRow } from "../shared/protocol";
 import type { UserTagMap } from "../lib/tags";
 import { markdownToSnippet, previewText } from "../lib/format";
 import { clearCover, fileToCover, setCover, useCovers } from "../lib/covers";
+import { collectionKind, setCollectionKind, useCollectionKinds } from "../lib/collectionKinds";
+import type { CollectionKind } from "../shared/api";
 import type { SpotCount } from "./SpotsSidebar";
 
 /** Episodes fetched per folder for its preview, and the ceiling across all folders. */
@@ -39,7 +41,7 @@ export function CollectionsBoard({
   /** Rows the board already has — saves a fetch for anything on screen. */
   loadedRows: EpisodeListRow[];
   onOpen: (name: string) => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, kind: CollectionKind) => void;
   onDelete: (name: string) => void;
 }) {
   const [fetched, setFetched] = useState<Map<string, EpisodeListRow>>(new Map());
@@ -47,6 +49,9 @@ export function CollectionsBoard({
   const [draftName, setDraftName] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const covers = useCovers();
+  const kinds = useCollectionKinds();
+  /** Which kind the inline "New collection" card will create. Fixed once created. */
+  const [draftKind, setDraftKind] = useState<CollectionKind>("grid");
   /** Which collection a pending file-picker choice belongs to. */
   const coverTarget = useRef<string | null>(null);
   const coverInput = useRef<HTMLInputElement | null>(null);
@@ -115,8 +120,12 @@ export function CollectionsBoard({
 
   const submitNew = () => {
     const name = draftName.trim();
-    if (name) onCreate(name);
+    if (name) {
+      setCollectionKind(name, draftKind);
+      onCreate(name, draftKind);
+    }
     setDraftName("");
+    setDraftKind("grid");
     setCreating(false);
   };
 
@@ -186,6 +195,9 @@ export function CollectionsBoard({
                 />
               )}
               <span className="collection-card-name">{spot.name}</span>
+              {collectionKind(spot.name, kinds) === "canvas" && (
+                <span className="collection-card-kind">Canvas</span>
+              )}
               <span className="collection-card-previews">
                 {previews.map((row) => (
                   <span key={row.id} className="collection-card-preview">
@@ -233,6 +245,24 @@ export function CollectionsBoard({
 
         {creating ? (
           <div className="collection-card collection-card-new is-editing">
+            <div className="collection-kind-picker" role="radiogroup" aria-label="Collection type">
+              {(["grid", "canvas"] as const).map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  role="radio"
+                  aria-checked={draftKind === option}
+                  className={draftKind === option ? "active" : ""}
+                  // Pointer-down: the name input's onBlur would otherwise commit first.
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    setDraftKind(option);
+                  }}
+                >
+                  {option === "grid" ? "Grid" : "Canvas"}
+                </button>
+              ))}
+            </div>
             <input
               autoFocus
               className="collection-new-input"

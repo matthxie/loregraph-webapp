@@ -28,7 +28,7 @@ dev user) when you want the UI with no network at all.
 
 ```sh
 npm run typecheck   # tsc
-npm test            # vitest — 199 tests, ported from brainbrain
+npm test            # vitest — 217 tests, mostly ported from brainbrain
 npm run build
 ```
 
@@ -57,6 +57,9 @@ user id from the `sub` claim and scopes all storage by it. CORS must allow the V
 `/episodes` (`?shuffle&seed&limit&offset`, and `?ids=` to hydrate specific rows),
 `/episodes/{id}`, `/episodes/{id}/graph`, `/search`, `/search/nl`, `/retrieve`, `/facts`,
 `/profile`, `/stats`.
+
+**Canvas collections** — `GET`/`PUT /collections/{name}/canvas`, one gzipped JSON object per
+collection. See [API.md §7](API.md); the `PUT` must honour the `etag` and 409 on a stale one.
 
 **Writes** — `POST /capture` → 202 `{spoolId}` (durable + queued, extraction is async);
 `GET /inbox/status?spool_ids=` polled at 1.2s to follow it; `DELETE /episodes/{id}`;
@@ -104,6 +107,13 @@ user's folders in one browser. `lib/prefs.ts` keeps a synchronous localStorage m
 Supabase as write-through sync, so `tags.ts` / `pins.ts` kept their exact store shape and every
 consumer is unchanged. **The table does not exist yet** — sync disables itself after a few failures
 and the app behaves exactly as the Electron one did until someone applies the migration.
+
+**Collections are grids or canvases.** Chosen at creation and fixed after. A grid lays its saves
+out like the feed; a canvas lets you drag them anywhere and draw lines, arrows, rectangles and
+ellipses between them. The *kind* is one enum in prefs; the canvas *document* lives on the graph
+service, because it is large and rewritten on every drag — the opposite profile from prefs. There
+is deliberately no freehand ink: it dominates the stored size and simplification is fiddly to get
+right.
 
 **Chat came back to the bar.** The omnibar has its three modes again — add / search / chat — restored
 from the v0.1.6 release, where `chatOpen` rendered `<ChatAnswer />` inline above the composer. There

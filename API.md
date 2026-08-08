@@ -59,6 +59,8 @@ are the daemon's existing return values and **should not be redesigned**. If a f
 | `GET /episodes?offset=&limit=&shuffle=&seed=` | `episodes.list` | See §4 — `shuffle`/`seed` are new and required. |
 | `GET /episodes/{id}` | `episode` | |
 | `GET /episodes/{id}/graph` | `graph.preview` | Per-episode subgraph for the card dev view. |
+| `GET /collections/{name}/canvas` | — | See §7. |
+| `PUT /collections/{name}/canvas` | — | See §7. |
 | `GET /search?q=&k=` | `search` | BM25. Client asks `k=100` for lookups. |
 | `POST /search/nl` | `search.nl` | Semantic ⊕ BM25, rank-fused. Client asks `k=20` for sentence queries. |
 | `POST /retrieve` | `retrieve` | Body is `RetrieveParams`. |
@@ -110,7 +112,7 @@ are the daemon's existing return values and **should not be redesigned**. If a f
 
 Sign-in/up/out, session refresh, plan status, Stripe checkout/portal, `profiles.tour_seen`, and
 user prefs all go **from the browser directly to Supabase**. The four existing migrations in
-`brainbrain/supabase/migrations/` carry over unchanged; this repo adds `user_prefs` (§7).
+`brainbrain/supabase/migrations/` carry over unchanged; this repo adds `user_prefs` (§8).
 
 ---
 
@@ -227,7 +229,51 @@ normal capture/reingest/delete routes; the client reconciles the board optimisti
 
 ---
 
-## 7. Supabase additions
+## 7. Canvas collections
+
+A collection is a **grid** or a **canvas**, chosen when it is created and fixed after. The *kind*
+is one enum per collection and lives in Supabase `user_prefs` with the rest of the folder state (§8).
+The canvas *document* does not — it is large and rewritten constantly, which is the opposite
+profile from prefs:
+
+```
+GET /collections/{name}/canvas   → 200 {"doc": CanvasDocument, "etag": "w/..."}
+                                 → 200 {"doc": <empty canvas>, "etag": null}   never saved
+PUT /collections/{name}/canvas     {"doc": CanvasDocument, "etag": "w/..."|null}
+                                 → 200 {"etag": "w/..."}
+                                 → 409 conflict   the stored etag moved on
+```
+
+`CanvasDocument` (typed in `shared/api.ts`):
+
+```jsonc
+{
+  "version": 1,
+  "items":  [{ "id": "ep_...", "x": 0, "y": 0, "w": 240, "h": 160, "z": 1 }],
+  "shapes": [{ "id": "sh_...", "kind": "line|arrow|rect|ellipse",
+               "x1": 0, "y1": 0, "x2": 100, "y2": 40, "color": 0, "width": 3 }],
+  "view":   { "x": 0, "y": 0, "zoom": 1 }
+}
+```
+
+Every shape is two points: lines and arrows run p1→p2, rects and ellipses take the two as
+opposite corners. `color` indexes a client-side palette, so the server stores an integer and
+never needs to know the theme. There is no freehand ink.
+
+**Storage.** One object per collection, e.g. `canvas/<user>/<collection>.json.gz`. Measured
+sizes: a typical canvas (50 saves, 40 shapes) is ~26 KB raw / ~8 KB gzipped; a busy one (200
+saves, 150 shapes) is ~138 KB / ~44 KB. Even 1,000 users with 20 canvases each is ~160 MB. The
+client rounds all coordinates to whole pixels before sending, which roughly halves it.
+
+**Concurrency.** `etag` is opaque to the client — it sends back whatever it last received.
+Return **409** when it doesn't match the stored one rather than overwriting; two tabs open on
+one canvas is the ordinary case, not an edge case.
+
+**Write rate.** The client debounces saves (~1.2 s after the last change) and flushes once when
+leaving the canvas, so a drag is one write rather than one per frame. An hour of continuous
+editing is on the order of 1,800 requests.
+
+## 8. Supabase additions
 
 Four migrations carry over from brainbrain unchanged (`accounts_billing`, `rename_plan_tiers`,
 `usage_daily`, `profiles`). This repo adds:

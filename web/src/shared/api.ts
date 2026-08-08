@@ -261,6 +261,54 @@ export type AskAppAction =
 
 export type AskAppActionResult = AskFolderActionResult;
 
+/**
+ * A collection is a grid or a free-form canvas, chosen when it is created and fixed after.
+ * The kind is one enum and lives in prefs; the canvas document does not — see API.md §8.
+ */
+export type CollectionKind = "grid" | "canvas";
+
+export type CanvasShapeKind = "line" | "arrow" | "rect" | "ellipse";
+
+/**
+ * One drawn shape. Every kind is two points: lines and arrows run p1→p2, rects and ellipses
+ * take the two as opposite corners. `color` indexes the palette; `width` is stroke px.
+ */
+export interface CanvasShape {
+  id: string;
+  kind: CanvasShapeKind;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: number;
+  width: number;
+}
+
+/** One save placed on the canvas. `id` is its episode id. */
+export interface CanvasItem {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+}
+
+export interface CanvasDocument {
+  version: 1;
+  items: CanvasItem[];
+  shapes: CanvasShape[];
+  /** Where the user left the viewport. */
+  view: { x: number; y: number; zoom: number };
+}
+
+/** A loaded canvas plus the concurrency token its next save must echo back. */
+export interface CanvasLoad {
+  doc: CanvasDocument;
+  /** Null for a canvas that has never been saved. */
+  etag: string | null;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -310,6 +358,15 @@ export interface CebApi {
   episodesByIds(ids: string[]): Promise<EpisodesListResult>;
   inboxStatus(spoolIds?: string[]): Promise<InboxStatusResult>;
   inboxDiscard(spoolId: string): Promise<InboxDiscardResult>;
+
+  // -- canvas collections -----------------------------------------------------
+  /** Load a collection's canvas; an unsaved one comes back empty with a null etag. */
+  canvasGet(collection: string): Promise<CanvasLoad>;
+  /**
+   * Save a canvas. `etag` is the token from the last load or save; the service rejects a
+   * stale one so two open tabs can't silently clobber each other. Debounced by the caller.
+   */
+  canvasSave(collection: string, doc: CanvasDocument, etag: string | null): Promise<{ etag: string }>;
 
   // -- capture + lifecycle ----------------------------------------------------
   /** Returns once the raw note is durable and queued; extraction runs on the worker. */
