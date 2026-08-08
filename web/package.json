@@ -1,0 +1,31 @@
+{
+  "name": "ceb-webapp",
+  "version": "0.1.0",
+  "description": "Ceb web app: the brainbrain UI on the hosted graph service (see API.md for the backend contract)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --no-cache"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "^28.0.0",
+    "typescript": "5.9.3",
+    "vite": "8.1.3",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,135 @@
+/* Design tokens + the global reset, shared by every renderer entry. Split out of
+   styles.css so the standalone Ask panel gets the app's colours, motion and squircle
+   corner-shape without pulling in the whole SPA shell. Edit here, not in a copy. */
+:root {
+  --window-header-padding-y: 0.75rem;
+  --window-header-control-size: 1.5rem;
+  --window-header-height: calc((var(--window-header-padding-y) * 2) + var(--window-header-control-size));
+  --content-scroll-cutoff: var(--window-header-height);
+  /* Width the OS reserves for native window controls on the right edge (Windows caption
+     buttons). 0 on macOS, where the controls live on the left. */
+  --titlebar-caption-inset: 0px;
+  /* Light mode: a plainly grey page under white raised surfaces — the grey is kept dark
+     enough that cards read as lifted paper, not white-on-white — hairline separators,
+     near-black text, with a single royal-blue accent in place of black. The inset grey
+     stays pale on purpose: it tints wells and embeds inside white surfaces, where it
+     reads against the card rather than against the page. */
+  --bg: #e2e2e5;
+  --bg-raised: #ffffff;
+  --bg-inset: #efeff1;
+  --composer-bg: #ffffff;
+  --memory-card-bg: #ffffff;
+  --composer-shadow: 0 12px 30px rgba(0, 0, 0, 0.11), 0 3px 9px rgba(0, 0, 0, 0.06);
+  /* The ⌃⌥Space panel floats on the desktop rather than over a page, so its shapes sit close
+     to whatever is behind them: a tighter, darker shadow that reads as contact instead of the
+     composer's long lift. Kept short on purpose, because the panel's transparent frame has to
+     leave room for every pixel of it (--ask-gutter) and that room swallows clicks. */
+  --ask-shadow: 0 4px 12px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.12);
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-tertiary: #98989d;
+  --separator: rgba(0, 0, 0, 0.08);
+  --accent: #0000ff;
+  --accent-tint: rgba(0, 0, 255, 0.12);
+  --card-emphasis: #000000;
+  /* Links ride the accent — blue in light, orange in dark — so there is one hot colour per theme. */
+  --link: var(--accent);
+  --danger: #d92c2c;
+  --warning: #c66a00;
+  --caution: #a08a00;
+  --ok: #248a3d;
+  --graph-symbol: #252529;
+  --graph-person: #248a3d;
+  --graph-place: #d90000;
+  --graph-thing: #0a68d6;
+  --graph-thought: #d63384;
+  /* Dev raw-graph node kinds (mention / tag / relation-predicate). */
+  --graph-mention: #6b7280;
+  --graph-tag: #0d9488;
+  --graph-relation: #7c3aed;
+  --bubble-user: #0a68d6;
+  --bubble-user-text: #ffffff;
+  /* Chat panel: the user's words come back as a solid accent bubble; only --chat-user-text
+     flips with the theme, since the accent already does. */
+  --chat-surface: #ffffff;
+  --chat-ceb-text: var(--accent);
+  --chat-user-bg: var(--accent);
+  --chat-user-text: #ffffff;
+  /* Links take the OTHER theme's hot colour, so they stand off the accent behind them. */
+  --chat-answer-link: #ff9f0a;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 4px 14px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.05);
+  --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.24);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  /* Sans is the whole app's voice, note content included. Card text used to be set in a serif
+     so that reading a memory felt different from operating the app; it reads as one surface
+     now, so there is no second face to keep. */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --squircle-xs: 8px;
+  --squircle-sm: 12px;
+  --squircle-md: 16px;
+  --squircle-lg: 20px;
+  --squircle-xl: 26px;
+  --squircle-composer: 30px;
+  --squircle-pill: 22px;
+  /* Shared motion language: quick feedback, soft surface entrances, and the same
+     spring-like travel used by the omnibar's larger state changes. */
+  --motion-fast: 140ms;
+  --motion-standard: 240ms;
+  --motion-roomy: 420ms;
+  --motion-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --motion-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Opening chat doesn't just slide a panel — it takes width from the board, which re-columns
+     the masonry underneath. At the standard roomy pace the cards snap to their new lanes
+     faster than the eye can follow them, so this move gets its own, longer beat. */
+  --motion-chat: 620ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e20;
+    --bg-raised: #29292c;
+    --bg-inset: #161618;
+    --composer-bg: #080809;
+    --memory-card-bg: #000000;
+    --composer-shadow: 0 14px 42px rgba(0, 0, 0, 0.52), 0 3px 12px rgba(0, 0, 0, 0.34);
+    --ask-shadow: 0 4px 14px rgba(0, 0, 0, 0.58), 0 1px 4px rgba(0, 0, 0, 0.44);
+    --text: #f2f2f4;
+    --text-secondary: #a5a5ab;
+    --text-tertiary: #77777d;
+    --separator: rgba(255, 255, 255, 0.12);
+    --accent: #ff9f0a;
+    --accent-tint: rgba(255, 159, 10, 0.18);
+    --card-emphasis: #ffffff;
+    --link: var(--accent);
+    --danger: #ff5f57;
+    --warning: #ff9f0a;
+    --caution: #d6c64a;
+    --ok: #32d74b;
+    --graph-symbol: #f4f4f6;
+    --graph-person: #32d74b;
+    --graph-place: #ff1a1a;
+    --graph-thing: #3f95f4;
+    --graph-thought: #ff4f9a;
+    --graph-mention: #9ca3af;
+    --graph-tag: #2dd4bf;
+    --graph-relation: #a78bfa;
+    --bubble-user: #2f6fd0;
+    --bubble-user-text: #ffffff;
+    --chat-surface: #000000;
+    --chat-ceb-text: var(--accent);
+    --chat-user-bg: var(--accent);
+    --chat-user-text: #000000;
+    --chat-answer-link: #0000ff;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+    --shadow-card-hover: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+    --shadow-overlay: 0 12px 44px rgba(0, 0, 0, 0.6);
+  }
+
+}
+
+* {
+  box-sizing: border-box;
+  /* CSS superellipse(2) resolves to the classic x^4 + y^4 = 1 squircle. */
+  corner-shape: superellipse(2);
+}

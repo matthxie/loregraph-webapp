@@ -1,0 +1,233 @@
+/* ---------- chat: the in-place answer -----------------------------------------------------
+   Selecting the chat symbol keeps the board where it is and swaps the omnibar into ask mode;
+   the answer arrives in ONE bubble floating just above the bar (components/ChatAnswer.tsx).
+   There is no transcript on screen — conversation memory is main's (chatHistory.ts). */
+
+/* The bubble's lane: a shade wider than the bar on both sides, so a long answer can run past
+   it rather than being another row of it. The bubble itself is centred in here. */
+.chat-answer-row {
+  display: flex;
+  justify-content: center;
+  width: calc(100% + 28px);
+  margin: 0 -14px 14px;
+}
+
+/* The bubble: the omnibar's own squircle, in the accent. It takes only the width its text
+   needs (a flex item sizes to its content) and stops at the lane's edge, so a one-line answer
+   is a small centred bubble and a long one fills the lane. */
+.chat-answer {
+  max-width: 100%;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 13px 18px 14px;
+  border-radius: var(--squircle-composer);
+  corner-shape: superellipse(2);
+  background: var(--chat-user-bg);
+  color: var(--chat-user-text);
+  /* The answer is the one thing on the surface worth reading, so it is set larger than the
+     interface around it rather than at the same 14px as everything else. */
+  font-size: 16px;
+  line-height: 28px; /* the board's own 16/28 rhythm */
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  box-shadow: var(--shadow-card);
+  user-select: text;
+  -webkit-user-select: text;
+  animation: chat-answer-in 300ms var(--motion-ease-soft) backwards;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, currentColor 40%, transparent) transparent;
+}
+
+@keyframes chat-answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.chat-answer.error {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.chat-answer-text {
+  white-space: normal; /* rendered markdown brings its own block spacing */
+}
+
+.chat-answer-text p {
+  margin: 0 0 7px;
+}
+
+.chat-answer-text p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-answer-text ul,
+.chat-answer-text ol {
+  margin: 0 0 7px;
+  padding-left: 18px;
+}
+
+.chat-answer-text code {
+  padding: 1px 4px;
+  border-radius: var(--squircle-xs);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* Links flip to the OTHER theme's hot colour — orange on the light theme's blue bubble, blue
+   on the dark theme's orange one — so a link is the one thing in the bubble that isn't just
+   more of the accent. */
+.chat-answer-text a {
+  color: var(--chat-answer-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Waiting on the answer: the bubble holding only the three dots and the run's breadcrumb. */
+.chat-answer-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-typing {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.chat-typing i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+  animation: chat-typing-bounce 1.1s ease-in-out infinite;
+}
+
+.chat-typing i:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-typing-bounce {
+  0%, 60%, 100% { opacity: 0.35; }
+  30% { opacity: 1; }
+}
+
+/* "thinking", then whatever the run is actually doing. It occupies the same bubble the answer
+   is about to, so it is set exactly as the answer is: same size, same weight, no dimming. The
+   breadcrumb used to sit at 85% opacity, which reads as smaller text even when it measures the
+   same, so the label appeared to grow the moment the reply replaced it. */
+.chat-typing-label {
+  font-size: 16px;
+}
+
+/* Web pages the answer stood on, painted under it. */
+.chat-embeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.chat-embed {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: var(--squircle-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-embed:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.chat-embed-title {
+  font-size: 12px;
+  font-weight: 560;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-embed-host {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* The four bottom-row buttons share ONE pitch: 44px between rights, which is 32px of button
+   and a 12px gap. The chat symbol takes the slot between the magnifier and the mic. */
+.omnibar-btn.omnibar-chat-btn {
+  right: 100px;
+  bottom: 10px;
+}
+
+/* Chat asks one line at a time, so the bar is one layer: the field and its buttons share a
+   row rather than the composer's two-storey shape (text above, actions below). No accent
+   edge — the brain button already says which mode the bar is in. */
+.omnibar-chat .write-composer.omnibar {
+  padding: 11px 142px 11px 16px;
+}
+
+.omnibar-chat .write-composer.omnibar textarea {
+  max-height: 96px;
+}
+
+/* Positioned on `bottom`, the property every other omnibar state animates — mixing `top`
+   with a transform against a `bottom` transition sent them arcing outside the bar on the way
+   in and out. Same 8px the search state uses. */
+.omnibar-chat .omnibar-btn.omnibar-send,
+.omnibar-chat .omnibar-btn.omnibar-mic,
+.omnibar-chat .omnibar-btn.omnibar-chat-btn {
+  bottom: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-answer {
+    animation: none;
+  }
+
+  .chat-typing i {
+    animation: none;
+  }
+}
+
+/* An AI-written memory — the daily chat summary — announced on the board rather than
+   passing as something the user typed. Editable, taggable and deletable like any card. */
+.card.card-ai {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.card.card-ai .snippet .snippet-entity {
+  color: currentColor;
+}
+
+.card.card-ai .caption {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+
+.card.card-ai .card-menu-button {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: none;
+  color: inherit;
+}
+
+@media (prefers-color-scheme: dark) {
+  .card.card-ai {
+    color: #000000;
+  }
+}
