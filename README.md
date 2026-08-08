@@ -19,9 +19,12 @@ supabase/     a proposed user_prefs migration (NOT applied)
 cd web && npm install && npm run dev
 ```
 
-With no `VITE_API_BASE_URL` set the app runs entirely on `lib/mockServer.ts`: fixture notes,
-simulated ingest, local auth (any email/password signs you in). That is the intended way to work
-on the UI today — the backend does not exist yet.
+**Sign-in is real.** It uses the same Supabase project as the Electron app, so existing accounts
+work — auth is deliberately independent of the graph service, which is still mocked.
+
+With no `VITE_API_BASE_URL` set, the board runs on `lib/mockServer.ts`: fixture notes and
+simulated ingest. Set `VITE_MOCK_AUTH=1` to skip real sign-in too (any credentials become a fixed
+dev user) when you want the UI with no network at all.
 
 ```sh
 npm run typecheck   # tsc
@@ -29,22 +32,60 @@ npm test            # vitest — 199 tests, ported from brainbrain
 npm run build
 ```
 
-## How it relates to brainbrain
+## What the backend must provide
 
-The Electron renderer talked to exactly one thing: `window.graph`, the typed bridge in
-`src/shared/bridge.ts`. Everything below it — daemon supervision, JSON-RPC, Supabase, the media
-protocol, file staging — lived in `src/main/` and never leaked into React. That is what made this
-port mostly a copy.
+This app is UI only. Everything below is what it calls out to — full schemas in
+[API.md](API.md), typed in [`web/src/shared/api.ts`](web/src/shared/api.ts), and implemented
+in-memory by `lib/mockServer.ts` as a reference.
 
-Carried over close to verbatim: `styles.css` / `tokens.css` / `chat.css`, the masonry board
-(`HistoryPage`), the omnibar (`InputPage`), the folders sidebar, link previews, the graph preview,
-onboarding, and the vitest suite for all of it.
+### Connections
 
-`shared/bridge.ts` became **`shared/api.ts`**: the same operation names and the same
-`protocol.ts` result shapes, redescribed as an HTTP contract and mounted as `window.graph` by
-`lib/graphClient.ts`. Ported components needed no edits.
+| Service | Used for | Configured by |
+|---|---|---|
+| **Graph service** (FastAPI on EC2, :443) | every graph read and write | `VITE_API_BASE_URL` |
+| **Supabase** | sign-in, plan/billing, `profiles.tour_seen`, user prefs — called direct from the browser, never through EC2 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
+| **S3** | attachment bytes, via presigned PUT/GET the service mints | — (never addressed directly) |
+| **SQS + worker** | ingest, entirely behind `POST /capture` | — (invisible to the client) |
 
-### What changed
+Auth is one Supabase JWT as `Authorization: Bearer` on every EC2 call; the service takes the
+user id from the `sub` claim and scopes all storage by it. CORS must allow the Vercel origin and
+`http://localhost:5273`.
+
+### Endpoints it calls
+
+**Reads** — `GET /health` (liveness + a `capabilities` object that gates UI panes),
+`/episodes` (`?shuffle&seed&limit&offset`, and `?ids=` to hydrate specific rows),
+`/episodes/{id}`, `/episodes/{id}/graph`, `/search`, `/search/nl`, `/retrieve`, `/facts`,
+`/profile`, `/stats`.
+
+**Writes** — `POST /capture` → 202 `{spoolId}` (durable + queued, extraction is async);
+`GET /inbox/status?spool_ids=` polled at 1.2s to follow it; `DELETE /episodes/{id}`;
+`POST /episodes/{id}/reingest`; `POST /pending/delete`; `GET /trash`, `POST /trash/{id}/restore`,
+`DELETE /trash/{id}`.
+
+**Chat** — `POST /chat` as SSE (`started → activity* → answer|error → done`), `POST /chat/cancel`,
+`GET /chat/history`.
+
+**Everything else** — `POST /media/presign` and `GET /media/{leaf}`; `POST /link-preview` (must be
+server-side: a browser can't read cross-origin OG tags, and client fetches would leak the user's IP
+to every link they save); `POST /dictation/transcribe`; `GET /usage/limits`; `GET /storage/usage`;
+`GET`/`PATCH /settings`; `POST /import/cold`.
+
+Two of these are new rather than ports of `daemon.py`: `shuffle`/`seed` sampling, and `?ids=`
+hydration. Both exist because the board holds a sample instead of the whole store.
+
+### Behaviour the client depends on
+
+- **`seed` must be stable** — same seed, same rows. The board refetches on every status poll; without
+  it the cards reshuffle under the cursor several times a minute.
+- **`operation_id` is an idempotency key** — a repeat must return the original `spoolId`, or a flaky
+  connection duplicates notes.
+- **402 messages must start with `USAGE_LIMIT:`** — every write surface shows the sentence after it
+  instead of a generic failure.
+- **A `false` capability returns 501, not 404** — the client hides the pane rather than erroring.
+- **No `screenshot` source kind on chat answers.** Computer use is out of scope.
+
+## What changed from the Electron app
 
 **The main view is a shuffled 10.** The Electron board paged the *entire* store into the renderer
 (2000 rows at a time until it had everything) and filtered client-side. Over a network that is

@@ -27,7 +27,7 @@ import type { Backend } from "./backend";
 import { httpBackend } from "./backend";
 import { mockBackend } from "./mockServer";
 import { USE_MOCK } from "./http";
-import { supabase, setSessionPersistence } from "./supabase";
+import { supabase, setSessionPersistence, SUPABASE_CONFIGURED } from "./supabase";
 import { readPref, writePref } from "./prefs";
 
 const backend: Backend = USE_MOCK ? mockBackend : httpBackend;
@@ -267,10 +267,12 @@ function mediaUrl(mediaPath: string): string | null {
 // -- auth / billing (Supabase directly) --------------------------------------
 
 /**
- * Mock mode has no Supabase project behind it, so auth is local: any credentials sign you in
- * as a fixed dev user. Lets the whole app be exercised against mockServer.ts before the
- * service (or a Supabase project) exists.
+ * Fallback when no Supabase project is configured (or VITE_MOCK_AUTH=1): any credentials sign
+ * you in as a fixed dev user. With a project configured, real accounts are used even while the
+ * graph itself is still served by mockServer.
  */
+const MOCK_AUTH = !SUPABASE_CONFIGURED;
+
 const MOCK_USER: AuthUser = { id: "u_mock", email: "dev@localhost" };
 const MOCK_SESSION_KEY = "ceb.mock.session";
 
@@ -283,7 +285,7 @@ function mockSignedIn(): boolean {
 }
 
 async function currentUser(): Promise<AuthUser | null> {
-  if (USE_MOCK) return mockSignedIn() ? MOCK_USER : null;
+  if (MOCK_AUTH) return mockSignedIn() ? MOCK_USER : null;
   const { data } = await supabase.auth.getUser();
   const user = data.user;
   return user?.email ? { id: user.id, email: user.email } : null;
@@ -294,6 +296,21 @@ async function callEdgeFunction<T>(name: string, body?: unknown): Promise<T> {
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`${name} returned no data`);
   return data;
+}
+
+const ACTIVE_STATUSES = new Set(["free", "trialing", "active"]);
+
+/** Reads the existing `subscriptions` row; anything not active reads as free. */
+async function readPlan(): Promise<{ plan: Plan }> {
+  if (MOCK_AUTH) return { plan: "free" };
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select("plan, status")
+    .maybeSingle();
+  if (error || !data) return { plan: "free" };
+  const active = ACTIVE_STATUSES.has(String(data.status));
+  const plan = data.plan as Plan;
+  return { plan: active && ["free", "basic", "pro"].includes(plan) ? plan : "free" };
 }
 
 // -- the client --------------------------------------------------------------
@@ -424,7 +441,7 @@ export const graphClient: CebApi = {
     return { user: await currentUser() };
   },
   async authSignUp(email, password, phone, remember = true) {
-    if (USE_MOCK) {
+    if (MOCK_AUTH) {
       localStorage.setItem(MOCK_SESSION_KEY, "1");
       return { confirmationRequired: false };
     }
@@ -438,7 +455,7 @@ export const graphClient: CebApi = {
     return { confirmationRequired: !data.session };
   },
   async authSignIn(email, password, remember = true) {
-    if (USE_MOCK) {
+    if (MOCK_AUTH) {
       localStorage.setItem(MOCK_SESSION_KEY, "1");
       return MOCK_USER;
     }
@@ -450,25 +467,21 @@ export const graphClient: CebApi = {
     return user;
   },
   async authSignOut() {
-    if (USE_MOCK) {
+    if (MOCK_AUTH) {
       localStorage.removeItem(MOCK_SESSION_KEY);
       return;
     }
     await supabase.auth.signOut();
   },
 
-  planStatus: () => (USE_MOCK
-    ? Promise.resolve({ plan: "free" as Plan })
-    : callEdgeFunction<{ plan: Plan }>("plan-status")),
-  planRefresh: () => (USE_MOCK
-    ? Promise.resolve({ plan: "free" as Plan })
-    : callEdgeFunction<{ plan: Plan }>("plan-status")),
+  planStatus: () => readPlan(),
+  planRefresh: () => readPlan(),
   billingCheckout: (plan) =>
     callEdgeFunction<{ url: string }>("create-checkout-session", { plan }),
   billingPortal: () => callEdgeFunction<{ url: string }>("create-portal-session"),
 
   async tourSeen() {
-    if (USE_MOCK) return true;
+    if (MOCK_AUTH) return true;
     const user = await currentUser();
     if (!user) return true;
     const { data, error } = await supabase
@@ -481,7 +494,7 @@ export const graphClient: CebApi = {
     return Boolean(data.tour_seen);
   },
   async tourMarkSeen() {
-    if (USE_MOCK) return;
+    if (MOCK_AUTH) return;
     const user = await currentUser();
     if (!user) return;
     await supabase.from("profiles").update({ tour_seen: true }).eq("id", user.id);
