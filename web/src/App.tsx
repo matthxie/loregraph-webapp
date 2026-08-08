@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AskMemoryQueued, AuthUser, DeletedRestoreResult, StatusSnapshot } from "./shared/api";
 import type { EpisodeGraphPreview, EpisodeListRow } from "./shared/protocol";
+import { Analytics } from "@vercel/analytics/react";
 import { LoginPage } from "./components/LoginPage";
 import { applyAskAppAction, recordAskMemoryFiling } from "./lib/chatActions";
 import { clearPrefs, hydratePrefs } from "./lib/prefs";
@@ -522,6 +523,7 @@ export function App(): React.JSX.Element {
         />
       )}
       <ImportToast hidden={showSettings} />
+      <Analytics />
     </div>
   );
 }
