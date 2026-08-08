@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadPins, reconcilePins, resetPinsForTests, savePins } from "./pins";
+import { getPins, insertPin, loadPins, movePin, reconcilePins, resetPinsForTests, savePins, setPins } from "./pins";
 
 describe("pins store", () => {
   beforeEach(() => resetPinsForTests());
@@ -19,6 +19,44 @@ describe("pins store", () => {
     expect(loadPins()).toEqual([]);
     localStorage.setItem("ceb.prefs.pins", JSON.stringify(["ok", 3, null]));
     expect(loadPins()).toEqual(["ok"]);
+  });
+});
+
+describe("insertPin / movePin", () => {
+  beforeEach(() => resetPinsForTests());
+  afterEach(() => localStorage.clear());
+
+  it("inserts at an index, clamping out-of-range ones to the ends", () => {
+    setPins(["ep_a", "ep_b"]);
+    insertPin("ep_c", 1);
+    expect(getPins()).toEqual(["ep_a", "ep_c", "ep_b"]);
+    insertPin("ep_d", 99);
+    expect(getPins()).toEqual(["ep_a", "ep_c", "ep_b", "ep_d"]);
+    insertPin("ep_e", -3);
+    expect(getPins()).toEqual(["ep_e", "ep_a", "ep_c", "ep_b", "ep_d"]);
+  });
+
+  it("reorders instead of duplicating when the id is already pinned", () => {
+    setPins(["ep_a", "ep_b", "ep_c"]);
+    insertPin("ep_c", 0);
+    expect(getPins()).toEqual(["ep_c", "ep_a", "ep_b"]);
+  });
+
+  it("moves a pin later, accounting for the slot it vacates", () => {
+    setPins(["ep_a", "ep_b", "ep_c"]);
+    movePin("ep_a", 2); // dropped above ep_c, which is index 2 while ep_a is still in the list
+    expect(getPins()).toEqual(["ep_b", "ep_a", "ep_c"]);
+    movePin("ep_b", 3); // past the end
+    expect(getPins()).toEqual(["ep_a", "ep_c", "ep_b"]);
+  });
+
+  it("returns the same array for a move that changes nothing", () => {
+    const pins = ["ep_a", "ep_b"];
+    setPins(pins);
+    movePin("ep_a", 0);
+    expect(getPins()).toBe(pins);
+    movePin("ep_missing", 1);
+    expect(getPins()).toBe(pins);
   });
 });
 

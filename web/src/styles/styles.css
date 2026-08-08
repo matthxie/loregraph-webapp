@@ -796,8 +796,42 @@ details.context pre {
   line-height: 1;
 }
 
-/* The Pinned section sits at the top of the board; its accent-colored header sets it apart, so it
- * spaces like an ordinary day section (no divider line). */
+/* The shelf is closed off by a rule under it rather than a box around it. The rule spans the card
+ * column, not the page: --board-width counts the masonry's 24px side padding, which the border sits
+ * inside of. */
+.pinned-section {
+  position: relative;
+  margin-bottom: 20px;
+}
+
+.pinned-section .masonry {
+  padding-bottom: 18px;
+}
+
+/* Inset to the masonry's own side padding, so the rule ends where the cards do. */
+.pinned-section::after {
+  content: "";
+  position: absolute;
+  right: 24px;
+  bottom: 0;
+  left: 24px;
+  border-bottom: 1px solid var(--separator);
+  transition: border-color var(--motion-fast) ease;
+}
+
+/* Nothing to rule off yet — the header and its hint carry the drop target on their own. */
+.pinned-section:has(.pinned-empty)::after {
+  border-bottom-color: transparent;
+}
+
+.pinned-section.drop-active::after {
+  border-bottom-color: var(--accent);
+}
+
+.pinned-section.drop-active .pinned-empty {
+  color: var(--accent);
+}
+
 .pinned-header {
   color: var(--accent);
 }
@@ -809,14 +843,20 @@ details.context pre {
   flex: none;
 }
 
-/* A pinned duplicate reads as a live pointer, not a snapshot — a faint accent ring ties the two.
- * `.card.card-pinned` (specificity 0-0-2-0) so the ring survives the later single-class `.card`
- * box-shadow rule below regardless of source order. */
-.card.card-pinned {
-  box-shadow: var(--shadow-card), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+.pinned-empty {
+  margin: 0;
+  padding: 0 24px 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
-.card.card-pinned:hover {
-  box-shadow: var(--shadow-card-hover), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+
+/* Where the dragged card would land. `.card.pin-drop-*` (0-0-2-0) to outrank the single-class
+ * `.card` box-shadow below regardless of source order. */
+.card.pin-drop-before {
+  box-shadow: var(--shadow-card), inset 0 3px 0 var(--accent);
+}
+.card.pin-drop-after {
+  box-shadow: var(--shadow-card), inset 0 -3px 0 var(--accent);
 }
 
 .card {

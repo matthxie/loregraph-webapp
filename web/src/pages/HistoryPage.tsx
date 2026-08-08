@@ -53,7 +53,8 @@ import {
   useHiddenFolders,
   useUserTags,
 } from "../lib/tags";
-import { reconcilePins, updatePins, usePins } from "../lib/pins";
+import { insertPin, movePin, reconcilePins, updatePins, usePins } from "../lib/pins";
+import { dragHasCard, dropIndexFor, readCardDrag, writeCardDrag, type DropSlot } from "../lib/cardDrag";
 import { pruneCovers } from "../lib/covers";
 import { CardDevView } from "../components/CardDevView";
 import { CardFolderPicker } from "../components/CardFolderPicker";
@@ -126,6 +127,15 @@ function FolderGlyph() {
   );
 }
 
+/** The shelf's header greets rather than labels. Swap for a constant to take that back out. */
+export function greetingLabel(now: Date = new Date()): string {
+  const hour = now.getHours();
+  if (hour < 5) return "Still up";
+  if (hour < 12) return "Morning";
+  if (hour < 17) return "Afternoon";
+  return "Evening";
+}
+
 function boardItemEpisodeId(item: HistoryBoardItem): string | null {
   if (item.kind === "real") return item.row?.id ?? null;
   return item.pending?.replacesEpisodeId ?? null;
@@ -170,7 +180,8 @@ function MasonryBoard({
   items: HistoryBoardItem[];
   columns: number;
   columnWidth: number;
-  renderCard: (item: HistoryBoardItem) => React.ReactNode;
+  /** `index` is the item's place in `items`, not in its column. */
+  renderCard: (item: HistoryBoardItem, index: number) => React.ReactNode;
   /** Cards carry the dev panel, so the first-guess heights have to account for it. */
   devView?: boolean;
 }) {
@@ -234,6 +245,8 @@ function MasonryBoard({
     });
   };
 
+  const itemIndex = useMemo(() => new Map(items.map((item, index) => [item.id, index])), [items]);
+
   return (
     <div className="masonry" ref={rootRef}>
       {cols.map((col, index) => (
@@ -244,7 +257,7 @@ function MasonryBoard({
         <div key={index} className="masonry-col" style={{ width: columnWidth, flex: "none" }}>
           {col.map((item) => (
             <React.Fragment key={item.id}>
-              {attach(renderCard(item), item.id)}
+              {attach(renderCard(item, itemIndex.get(item.id) ?? 0), item.id)}
             </React.Fragment>
           ))}
         </div>
@@ -314,6 +327,15 @@ export function HistoryPage({
   const [shuffleOrder, setShuffleOrder] = useState<string[]>([]);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const pinnedIds = usePins();
+  /** Pinned episodes fetched by id because the loaded page doesn't contain them. */
+  const [pinnedRowsById, setPinnedRowsById] = useState<Map<string, EpisodeListRow>>(new Map());
+  const hydratedPinsRef = useRef(new Set<string>());
+  const hydrateKeyRef = useRef("");
+  /** The card being dragged, and where it started — null whenever no card drag is in flight. */
+  const [cardDrag, setCardDrag] = useState<{ episodeId: string; from: "pinned" | "board" } | null>(null);
+  /** Slot the drop would land on, as an index into the shelf's pin order. Null = not over the shelf. */
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const shelfRef = useRef<HTMLDivElement | null>(null);
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<DeleteTarget | null>(null);
   const [pendingEdit, setPendingEdit] = useState<{ id: string; text: string } | null>(null);
   /** Editing a STORED note. The detail overlay is gone; a note is only ever its own text. */
@@ -575,6 +597,44 @@ export function HistoryPage({
       : [episodeId, ...current]); // newest pin rides to the top of the Pinned section
   }, []);
 
+  const endCardDrag = useCallback(() => {
+    setCardDrag(null);
+    setDropIndex(null);
+  }, []);
+
+  /** The shelf's DOM is column-major, so its slots are re-sorted into pin order before measuring. */
+  const dropIndexAt = useCallback((point: { x: number; y: number }): number => {
+    const shelf = shelfRef.current;
+    if (!shelf) return 0;
+    const order = new Map(pinnedIds.map((id, index) => [id, index]));
+    const slots: DropSlot[] = Array.from(shelf.querySelectorAll<HTMLElement>("[data-pin-id]"))
+      .flatMap((element) => {
+        const id = element.dataset.pinId;
+        if (!id || !order.has(id)) return [];
+        return [{ id, rect: element.getBoundingClientRect() }];
+      })
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    return dropIndexFor(slots, point);
+  }, [pinnedIds]);
+
+  const onShelfDragOver = useCallback((event: React.DragEvent) => {
+    if (!dragHasCard(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropIndex(dropIndexAt({ x: event.clientX, y: event.clientY }));
+  }, [dropIndexAt]);
+
+  const onShelfDrop = useCallback((event: React.DragEvent) => {
+    const payload = readCardDrag(event.dataTransfer);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation(); // the page below unpins anything dropped outside the shelf
+    const index = dropIndexAt({ x: event.clientX, y: event.clientY });
+    if (payload.from === "pinned") movePin(payload.episodeId, index);
+    else insertPin(payload.episodeId, index);
+    endCardDrag();
+  }, [dropIndexAt, endCardDrag]);
+
   // Keep pins honest against the live list: drop deleted episodes, and follow a pin across an edit
   // (a reingest replaces episode A with B → the pin migrates so the pinned card survives the edit).
   // Only prune a missing pin as "deleted" once the FULL list has loaded — the board pages in the
@@ -585,6 +645,48 @@ export function HistoryPage({
     const liveIds = new Set(rows.map((row) => row.id));
     updatePins((current) => reconcilePins(current, liveIds, pendingEntries, rows.length >= rowsTotal));
   }, [rows, rowsTotal, pendingEntries]);
+
+  /** Bumped whenever `rows` is refetched — the pinned rows are due again with it. */
+  const hydrateKey = `${refreshToken}:${mode}:${shuffleSeed}`;
+
+  // `shuffle` loads a sample, so which pins are in `rows` changes with every draw. Keep a row for
+  // EVERY pin, independent of the sample — hydrating only the ones currently missing would empty
+  // the shelf each time a draw dropped one. Rows already on the board still win in the shelf; this
+  // is the floor under them.
+  useEffect(() => {
+    if (!engineRunning || typeof window.graph.episodesByIds !== "function") return;
+    // A refetch makes the cached rows stale, so every pin is due again — but the cache keeps
+    // serving the old rows until the new ones land. Clearing it here is what made the shelf blink.
+    if (hydrateKeyRef.current !== hydrateKey) {
+      hydrateKeyRef.current = hydrateKey;
+      hydratedPinsRef.current = new Set();
+    }
+    const wanted = pinnedIds.filter((id) => !hydratedPinsRef.current.has(id));
+    if (wanted.length === 0) return;
+    wanted.forEach((id) => hydratedPinsRef.current.add(id));
+    let alive = true;
+    let settled = false;
+    void window.graph.episodesByIds(wanted)
+      .then((page) => {
+        settled = true;
+        if (!alive) return;
+        setPinnedRowsById((current) => {
+          const next = new Map(current);
+          for (const row of page.episodes) next.set(row.id, row);
+          // Asked for but not returned = gone. Only now is it safe to drop the cached copy.
+          const returned = new Set(page.episodes.map((row) => row.id));
+          for (const id of wanted) if (!returned.has(id)) next.delete(id);
+          return next;
+        });
+      })
+      .catch(() => wanted.forEach((id) => hydratedPinsRef.current.delete(id)));
+    return () => {
+      alive = false;
+      // Torn down before the response landed — un-mark, or these ids are attempted once and never
+      // again. StrictMode's double-invoked mount effect hits this on every page load.
+      if (!settled) wanted.forEach((id) => hydratedPinsRef.current.delete(id));
+    };
+  }, [engineRunning, pinnedIds, hydrateKey]);
 
   // The Electron board paged the entire store into memory and filtered locally. Over a network
   // that is untenable, and the default view no longer wants it: `shuffle` asks the service for a
@@ -914,6 +1016,19 @@ export function HistoryPage({
   const boardItems = useMemo(() => buildBoardItems(filteredRows), [buildBoardItems, filteredRows]);
   const randomBoardItems = useMemo(() => buildBoardItems(randomRows), [buildBoardItems, randomRows]);
 
+  const loadedRowIds = useMemo(() => new Set((rows ?? []).map((row) => row.id)), [rows]);
+
+  /** Board items for pins the loaded page is missing, keyed by episode id. */
+  const hydratedByEpisode = useMemo(() => {
+    const byEpisode = new Map<string, HistoryBoardItem>();
+    if (pinnedRowsById.size === 0) return byEpisode;
+    for (const item of buildBoardItems([...pinnedRowsById.values()])) {
+      const episodeId = boardItemEpisodeId(item);
+      if (episodeId && !byEpisode.has(episodeId)) byEpisode.set(episodeId, item);
+    }
+    return byEpisode;
+  }, [buildBoardItems, pinnedRowsById]);
+
   // Duplicate the pinned cards into a section of their own, in pin order (newest first). They reuse
   // the same board items — a real row, or its reingest skeleton while it's being edited — so a
   // pinned card is a live pointer to the original, and search narrows both copies together. The
@@ -938,13 +1053,18 @@ export function HistoryPage({
     const seen = new Set<string>();
     for (const id of pinnedIds) {
       const migratedId = migrated.get(id);
-      const item = byEpisode.get(id) ?? (migratedId ? byEpisode.get(migratedId) : undefined);
+      const item = byEpisode.get(id)
+        ?? (migratedId ? byEpisode.get(migratedId) : undefined)
+        // Absent from the board because the page never loaded it — not because a filter dropped
+        // it — so fall back to the row fetched by id. A search or tag filter still narrows both
+        // copies together.
+        ?? (loadedRowIds.has(id) || searching || tagFiltering ? undefined : hydratedByEpisode.get(id));
       if (!item || seen.has(item.id)) continue; // skip missing / de-dupe two pins onto one target
       seen.add(item.id);
       items.push({ ...item, id: `pinned:${item.id}` });
     }
     return items;
-  }, [pinnedIds, boardItems, pendingEntries]);
+  }, [pinnedIds, boardItems, pendingEntries, loadedRowIds, hydratedByEpisode, searching, tagFiltering]);
 
   // Day sections computed ONCE per real change. groupByDay allocates fresh arrays every call, so
   // building this inline in the render handed each MasonryBoard a new `items` array on every
@@ -1101,6 +1221,15 @@ export function HistoryPage({
           className={`card${row.source === "assistant" ? " card-ai" : ""}${pinned ? " card-pinned" : ""}${!pinned && spotlightEpisodeId === row.id ? " episode-jump-target" : ""}`}
           aria-label={`${pinned ? "pinned-" : ""}history-card-${row.id}`}
           data-episode-id={pinned ? undefined : row.id}
+          // The shelf measures its slots off this attribute; only its own copies carry it.
+          data-pin-id={pinned ? row.id : undefined}
+          draggable
+          onDragStart={(event) => {
+            const from = pinned ? "pinned" : "board";
+            writeCardDrag(event.dataTransfer, { episodeId: row.id, from });
+            setCardDrag({ episodeId: row.id, from });
+          }}
+          onDragEnd={endCardDrag}
           onContextMenu={(e) => {
             e.preventDefault();
             setCtxMenu({ x: e.clientX, y: e.clientY, episodeId: row.id });
@@ -1127,7 +1256,8 @@ export function HistoryPage({
           </button>
           {images.map((p) => {
             const url = mediaUrl(p);
-            return url ? <img key={p} src={url} loading="lazy" alt="" /> : null;
+            // draggable={false}: an image drags itself by default, which would beat the card to it.
+            return url ? <img key={p} src={url} loading="lazy" alt="" draggable={false} /> : null;
           })}
           {showBody && (
             <div className="body">
@@ -1144,6 +1274,7 @@ export function HistoryPage({
                     seg.kind === "link" ? (
                       <a
                         key={i}
+                        draggable={false}
                         onClick={(e) => {
                           e.stopPropagation();
                           void window.graph.openExternal(seg.url);
@@ -1167,7 +1298,7 @@ export function HistoryPage({
         </div>
       );
     },
-    [displayTags, userTags, rowTagNames, spotlightEpisodeId, cardDevView],
+    [displayTags, userTags, rowTagNames, spotlightEpisodeId, cardDevView, endCardDrag],
   );
 
   return (
@@ -1363,6 +1494,19 @@ export function HistoryPage({
         className="history-page"
         ref={wrapRef}
         style={{ "--board-width": `${boardWidth}px` } as React.CSSProperties}
+        // Dropping a shelf card back on the board unpins it; the shelf stops its own drops here.
+        onDragOver={(event) => {
+          if (cardDrag?.from !== "pinned" || !dragHasCard(event.dataTransfer)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={(event) => {
+          const payload = readCardDrag(event.dataTransfer);
+          if (payload?.from !== "pinned") return;
+          event.preventDefault();
+          updatePins((current) => current.filter((id) => id !== payload.episodeId));
+          endCardDrag();
+        }}
       >
       {/* Collections: folder cards, until one is opened — then the notes inside it. */}
       {tab === "collections" && !openCollection && (
@@ -1400,21 +1544,46 @@ export function HistoryPage({
           <p className="muted">No card carries {activeTags.map((tag) => `/${tag}`).join(" + ")}. Add the tag{activeTags.length === 1 ? "" : "s"} to a note, or deselect one.</p>
         </div>
       )}
-      {showNotes && pinnedBoardItems.length > 0 && (
-        <div className="day-section pinned-section">
+      {/* Also open, empty, mid-drag — otherwise there's nothing to drop on before the first pin. */}
+      {showNotes && (pinnedBoardItems.length > 0 || cardDrag?.from === "board") && (
+        <div
+          className={`day-section pinned-section${dropIndex !== null ? " drop-active" : ""}`}
+          ref={shelfRef}
+          aria-label="Pinned"
+          onDragOver={onShelfDragOver}
+          onDragLeave={(event) => {
+            // Ignore the leave events fired crossing between the shelf's own children.
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropIndex(null);
+          }}
+          onDrop={onShelfDrop}
+        >
           <div className="day-header pinned-header">
             <svg className="pinned-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M9 4h6l-1 6 3 3v2h-4v5l-1 1-1-1v-5H6v-2l3-3-1-6z" />
             </svg>
-            <span className="day-header-label">Pinned</span>
+            <span className="day-header-label">{greetingLabel()}</span>
           </div>
-          <MasonryBoard
-            items={pinnedBoardItems}
-            columns={columns}
-            columnWidth={columnWidth}
-            renderCard={(item) => renderCard(item, { pinned: true })}
-            devView={cardDevView}
-          />
+          {pinnedBoardItems.length > 0 ? (
+            <MasonryBoard
+              items={pinnedBoardItems}
+              columns={columns}
+              columnWidth={columnWidth}
+              // Marked on the card by cloneElement, so the shared renderer stays out of the drag.
+              renderCard={(item, index) => {
+                const node = renderCard(item, { pinned: true });
+                const hint = dropIndex === index
+                  ? " pin-drop-before"
+                  : dropIndex === pinnedBoardItems.length && index === pinnedBoardItems.length - 1
+                    ? " pin-drop-after"
+                    : "";
+                if (!hint || !React.isValidElement<{ className?: string }>(node)) return node;
+                return React.cloneElement(node, { className: `${node.props.className ?? ""}${hint}` });
+              }}
+              devView={cardDevView}
+            />
+          ) : (
+            <p className="pinned-empty">Drop a card here to pin it.</p>
+          )}
         </div>
       )}
       {showNotes && daySections.length > 0 && (
@@ -1430,7 +1599,7 @@ export function HistoryPage({
                 items={section.entries}
                 columns={columns}
                 columnWidth={columnWidth}
-                renderCard={renderCard}
+                renderCard={(item) => renderCard(item)}
                 devView={cardDevView}
               />
             </div>
@@ -1443,7 +1612,7 @@ export function HistoryPage({
             items={randomBoardItems}
             columns={columns}
             columnWidth={columnWidth}
-            renderCard={renderCard}
+            renderCard={(item) => renderCard(item)}
             devView={cardDevView}
           />
         </div>
@@ -1454,7 +1623,7 @@ export function HistoryPage({
             items={boardItems}
             columns={columns}
             columnWidth={columnWidth}
-            renderCard={renderCard}
+            renderCard={(item) => renderCard(item)}
             devView={cardDevView}
           />
           {rows !== null && rowsTotal > rows.length && (

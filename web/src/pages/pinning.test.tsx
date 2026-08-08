@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StatusSnapshot } from "../shared/api";
 import type { EpisodeListRow } from "../shared/protocol";
 import { resetPinsForTests } from "../lib/pins";
-import { HistoryPage } from "./HistoryPage";
+import { CARD_DRAG_MIME } from "../lib/cardDrag";
+import { greetingLabel, HistoryPage } from "./HistoryPage";
 
 const rowA = {
   id: "ep_note_0001",
@@ -41,7 +42,10 @@ const capabilities = {
 
 const snapshot = { engine: { state: "running" }, capabilities } as unknown as StatusSnapshot;
 
-function mountGraph(episodes: EpisodeListRow[] | ReturnType<typeof vi.fn>) {
+function mountGraph(
+  episodes: EpisodeListRow[] | ReturnType<typeof vi.fn>,
+  extra: Record<string, unknown> = {},
+) {
   Object.defineProperty(window, "graph", {
     configurable: true,
     value: {
@@ -50,6 +54,7 @@ function mountGraph(episodes: EpisodeListRow[] | ReturnType<typeof vi.fn>) {
         : vi.fn().mockResolvedValue({ episodes, total: episodes.length }),
       search: vi.fn().mockResolvedValue({ episodes: [] }),
       episodeDelete: vi.fn().mockResolvedValue(undefined),
+      ...extra,
     },
   });
 }
@@ -85,6 +90,51 @@ async function clickMenuItem(label: string) {
   await act(async () => button!.click());
 }
 
+/** jsdom implements neither DataTransfer nor DragEvent — this is the slice the page uses. */
+function dataTransferStub(): DataTransfer {
+  const store = new Map<string, string>();
+  return {
+    get types() {
+      return [...store.keys()];
+    },
+    setData: (type: string, value: string) => void store.set(type, value),
+    getData: (type: string) => store.get(type) ?? "",
+    dropEffect: "none",
+    effectAllowed: "none",
+  } as unknown as DataTransfer;
+}
+
+async function fireDrag(
+  target: Element | null,
+  type: string,
+  dataTransfer: DataTransfer,
+  point: { x: number; y: number } = { x: 0, y: 0 },
+) {
+  expect(target, `${type} target should exist`).not.toBeNull();
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    dataTransfer: { value: dataTransfer },
+    clientX: { value: point.x },
+    clientY: { value: point.y },
+  });
+  await act(async () => void target!.dispatchEvent(event));
+}
+
+/** Stack the shelf's slots 100px apart in pin order, since jsdom measures everything as zero. */
+function stubPinnedRects(order: string[]) {
+  document.querySelectorAll<HTMLElement>("[data-pin-id]").forEach((element) => {
+    const index = order.indexOf(element.dataset.pinId ?? "");
+    const top = index * 100;
+    element.getBoundingClientRect = () =>
+      ({ left: 0, right: 200, top, bottom: top + 100, width: 200, height: 100, x: 0, y: top }) as DOMRect;
+  });
+}
+
+function pinnedLabels(): (string | null)[] {
+  return Array.from(document.querySelectorAll('.pinned-section [aria-label^="pinned-history-card-"]'))
+    .map((card) => card.getAttribute("aria-label"));
+}
+
 describe("pinning", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -112,18 +162,22 @@ describe("pinning", () => {
     localStorage.clear();
   });
 
-  async function render(props: Partial<React.ComponentProps<typeof HistoryPage>> = {}) {
+  async function render(
+    props: Partial<React.ComponentProps<typeof HistoryPage>> = {},
+    { strict = false } = {},
+  ) {
+    const page = (
+      <HistoryPage
+        snapshot={snapshot}
+        refreshToken={0}
+        pendingEntries={[]}
+        onOpenSettings={vi.fn()}
+        onMutated={vi.fn()}
+        {...props}
+      />
+    );
     await act(async () => {
-      root.render(
-        <HistoryPage
-          snapshot={snapshot}
-          refreshToken={0}
-          pendingEntries={[]}
-          onOpenSettings={vi.fn()}
-          onMutated={vi.fn()}
-          {...props}
-        />,
-      );
+      root.render(strict ? <React.StrictMode>{page}</React.StrictMode> : page);
     });
   }
 
@@ -143,7 +197,7 @@ describe("pinning", () => {
 
     const section = document.querySelector(".pinned-section");
     expect(section).not.toBeNull();
-    expect(section?.querySelector(".day-header-label")?.textContent).toBe("Pinned");
+    expect(section?.querySelector(".day-header-label")?.textContent).toBe(greetingLabel());
     // The original stays in its day section; a live duplicate now sits under Pinned.
     expect(document.querySelector(`[aria-label="history-card-${rowA.id}"]`)).not.toBeNull();
     const pinnedCard = document.querySelector(`[aria-label="pinned-history-card-${rowA.id}"]`);
@@ -274,6 +328,145 @@ describe("pinning", () => {
     const migrated = document.querySelector(`[aria-label="pinned-history-card-${rowB.id}"]`);
     expect(migrated).not.toBeNull();
     expect(migrated?.textContent).toContain("black coffee in the afternoon");
+  });
+
+  it("opens an empty shelf while a board card is being dragged", async () => {
+    mountGraph([rowA]);
+    await render();
+    expect(document.querySelector(".pinned-section")).toBeNull();
+
+    const dataTransfer = dataTransferStub();
+    await fireDrag(document.querySelector(`[aria-label="history-card-${rowA.id}"]`), "dragstart", dataTransfer);
+    expect(document.querySelector(".pinned-section .pinned-empty")).not.toBeNull();
+
+    // Dropping nowhere leaves the pins alone and closes the shelf again.
+    await fireDrag(document.querySelector(`[aria-label="history-card-${rowA.id}"]`), "dragend", dataTransfer);
+    expect(document.querySelector(".pinned-section")).toBeNull();
+  });
+
+  it("pins a card dragged from the board onto the shelf", async () => {
+    mountGraph([rowA]);
+    await render();
+
+    const dataTransfer = dataTransferStub();
+    const card = document.querySelector(`[aria-label="history-card-${rowA.id}"]`);
+    await fireDrag(card, "dragstart", dataTransfer);
+    expect(dataTransfer.getData(CARD_DRAG_MIME)).toContain(rowA.id);
+
+    const shelf = document.querySelector(".pinned-section");
+    await fireDrag(shelf, "dragover", dataTransfer);
+    expect(shelf?.classList.contains("drop-active")).toBe(true);
+    await fireDrag(shelf, "drop", dataTransfer);
+
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+    expect(document.querySelector(".pinned-section.drop-active")).toBeNull();
+  });
+
+  it("unpins a card dragged out of the shelf onto the board", async () => {
+    mountGraph([rowA]);
+    await render();
+    await rightClick(root, `history-card-${rowA.id}`);
+    await clickMenuItem("Pin");
+
+    const dataTransfer = dataTransferStub();
+    await fireDrag(document.querySelector(`[aria-label="pinned-history-card-${rowA.id}"]`), "dragstart", dataTransfer);
+    await fireDrag(document.querySelector(".history-page"), "drop", dataTransfer);
+
+    expect(document.querySelector(".pinned-section")).toBeNull();
+    expect(localStorage.getItem("ceb.prefs.pins")).toBe("[]");
+  });
+
+  it("reorders the shelf by dropping one pinned card above another", async () => {
+    mountGraph([rowA, rowB]);
+    await render();
+    await rightClick(root, `history-card-${rowA.id}`);
+    await clickMenuItem("Pin");
+    await rightClick(root, `history-card-${rowB.id}`);
+    await clickMenuItem("Pin");
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowB.id}`, `pinned-history-card-${rowA.id}`]);
+
+    // Drag A (slot 1) into the top half of slot 0 — it lands before B.
+    stubPinnedRects([rowB.id, rowA.id]);
+    const dataTransfer = dataTransferStub();
+    await fireDrag(document.querySelector(`[aria-label="pinned-history-card-${rowA.id}"]`), "dragstart", dataTransfer);
+    const shelf = document.querySelector(".pinned-section");
+    await fireDrag(shelf, "drop", dataTransfer, { x: 100, y: 10 });
+
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`, `pinned-history-card-${rowB.id}`]);
+    // A drop inside the shelf must not reach the page's unpin handler.
+    expect(JSON.parse(localStorage.getItem("ceb.prefs.pins") ?? "[]")).toEqual([rowA.id, rowB.id]);
+  });
+
+  it("holds pinned cards through a re-shuffle that drops them from the sample", async () => {
+    // The board shows a sample of a much larger store, so a re-shuffle draws a different one.
+    const episodesList = vi.fn()
+      .mockResolvedValueOnce({ episodes: [rowA, rowB], total: 50 })
+      .mockResolvedValue({ episodes: [rowB], total: 50 });
+    const episodesByIds = vi.fn().mockResolvedValue({ episodes: [rowA], total: 1 });
+    mountGraph(episodesList, { episodesByIds });
+    await render();
+
+    await rightClick(root, `history-card-${rowA.id}`);
+    await clickMenuItem("Pin");
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+
+    // New sample: A is not in the feed at all, so the shelf has to fetch it by id.
+    await render({ refreshToken: 1 });
+    await act(async () => {});
+    expect(document.querySelector(`[aria-label="history-card-${rowA.id}"]`)).toBeNull();
+    expect(episodesByIds).toHaveBeenCalledWith([rowA.id]);
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+  });
+
+  it("hydrates pins on a cold load under StrictMode's double-invoked effects", async () => {
+    // How the app actually mounts (main.tsx). The first effect run is torn down before its fetch
+    // lands, so the second run has to reissue it.
+    localStorage.setItem("ceb.prefs.pins", JSON.stringify([rowA.id]));
+    resetPinsForTests();
+    const episodesByIds = vi.fn().mockResolvedValue({ episodes: [rowA], total: 1 });
+    mountGraph(vi.fn().mockResolvedValue({ episodes: [rowB], total: 50 }), { episodesByIds });
+
+    await render({}, { strict: true });
+    await act(async () => {});
+
+    expect(episodesByIds).toHaveBeenCalledWith([rowA.id]);
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+  });
+
+  it("holds the shelf steady while a re-shuffle re-fetches its rows", async () => {
+    const episodesList = vi.fn()
+      .mockResolvedValueOnce({ episodes: [rowA, rowB], total: 50 })
+      .mockResolvedValue({ episodes: [rowB], total: 50 });
+    const episodesByIds = vi.fn()
+      .mockResolvedValueOnce({ episodes: [rowA], total: 1 })
+      .mockReturnValue(new Promise(() => {})); // the re-shuffle's fetch never settles
+    mountGraph(episodesList, { episodesByIds });
+    await render();
+    await rightClick(root, `history-card-${rowA.id}`);
+    await clickMenuItem("Pin");
+    await act(async () => {});
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+
+    await render({ refreshToken: 1 });
+    await act(async () => {});
+    // Rows are due again, but the cached ones carry the shelf until the new ones land — no blink.
+    expect(episodesByIds).toHaveBeenCalledTimes(2);
+    expect(pinnedLabels()).toEqual([`pinned-history-card-${rowA.id}`]);
+  });
+
+  it("still narrows the shelf with the board when a search is running", async () => {
+    const episodesList = vi.fn().mockResolvedValue({ episodes: [rowA, rowB], total: 50 });
+    const episodesByIds = vi.fn().mockResolvedValue({ episodes: [rowA], total: 1 });
+    mountGraph(episodesList, { episodesByIds });
+    await render();
+    await rightClick(root, `history-card-${rowA.id}`);
+    await clickMenuItem("Pin");
+
+    // "coffee" matches B only — the pinned copy of A goes with the original.
+    await render({ searchQuery: "coffee" });
+    await act(async () => {});
+    expect(document.querySelector(`[aria-label="history-card-${rowA.id}"]`)).toBeNull();
+    expect(pinnedLabels()).toEqual([]);
   });
 
   it("drops the pin when the pinned episode is deleted", async () => {

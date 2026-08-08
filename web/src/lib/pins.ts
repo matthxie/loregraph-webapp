@@ -66,6 +66,37 @@ export function usePins(): string[] {
   return useSyncExternalStore(subscribePins, getPins);
 }
 
+function clampIndex(index: number, length: number): number {
+  if (!Number.isFinite(index)) return length;
+  return Math.max(0, Math.min(Math.round(index), length));
+}
+
+/** Pin `id` at `index`. Already pinned → a reorder, so a re-drop never duplicates it. */
+export function insertPin(id: string, index: number): void {
+  updatePins((current) => {
+    if (current.includes(id)) return reorder(current, id, index);
+    const next = [...current];
+    next.splice(clampIndex(index, next.length), 0, id);
+    return next;
+  });
+}
+
+/** Move an existing pin to `index`. A no-op move returns the SAME array, so React bails on it. */
+export function movePin(id: string, index: number): void {
+  updatePins((current) => reorder(current, id, index));
+}
+
+/** `index` is a slot in the current order, with `id` still in it — a later slot shifts down one. */
+function reorder(pins: string[], id: string, index: number): string[] {
+  const from = pins.indexOf(id);
+  if (from < 0) return pins;
+  const without = pins.filter((pin) => pin !== id);
+  const to = clampIndex(index > from ? index - 1 : index, without.length);
+  if (to === from) return pins;
+  without.splice(to, 0, id);
+  return without;
+}
+
 /** Test-only: force the next read back through the store. */
 export function resetPinsForTests(): void {
   pinsState = null;
