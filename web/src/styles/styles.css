@@ -3333,7 +3333,7 @@ details.context pre {
 }
 
 .notes-history-toolbar {
-  padding-left: 124px;
+  padding-left: 24px;
   /* Transparent so the full-height folders panel (below) shows its surface and right divider
      right up to the top edge. Board content starts below the toolbar (content-body margin),
      so nothing scrolls into this band — the toolbar is just the drag surface + buttons. */
@@ -6957,4 +6957,318 @@ body.is-windows .notes-history-toolbar {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ---------------------------------------------------------------------------
+   Feed / Collections tabs + the collections grid.
+   --------------------------------------------------------------------------- */
+
+/* Centred on the toolbar independently of the actions on its right, so adding a
+   button never shifts the tabs off centre. */
+.board-tabs {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--squircle-pill);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.board-tab {
+  position: relative;
+  z-index: 1;
+  padding: 6px 18px;
+  border: 0;
+  border-radius: var(--squircle-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 590;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: color var(--motion-standard) ease;
+}
+
+.board-tab:hover {
+  color: var(--text);
+}
+
+.board-tab.active {
+  color: var(--text);
+}
+
+/* One pill that slides between the two, rather than a background per tab — the movement is
+   what reads as a single control. Its left/width are measured from the active tab. */
+.board-tabs-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: var(--squircle-pill);
+  background: var(--memory-card-bg);
+  box-shadow: var(--shadow-card);
+  transition:
+    left 320ms var(--motion-ease),
+    width 320ms var(--motion-ease);
+}
+
+.collections-board {
+  padding: 8px 24px 140px;
+}
+
+.collections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  max-width: var(--board-width, 1200px);
+  margin: 0 auto;
+}
+
+.collection-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 150px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--squircle-md);
+  background: var(--memory-card-bg);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  animation: card-soft-in 360ms var(--motion-ease-soft) backwards;
+  transition:
+    box-shadow var(--motion-standard) ease,
+    transform var(--motion-standard) var(--motion-ease);
+}
+
+.collection-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
+}
+
+/* A cover sits behind the card's own content, with a scrim under the text so any image
+   keeps the name legible. */
+.collection-card-cover {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-position: center;
+  background-size: cover;
+}
+
+.collection-card-cover::after {
+  position: absolute;
+  content: "";
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #000 22%, transparent) 0%,
+    color-mix(in srgb, #000 58%, transparent) 100%
+  );
+}
+
+/* The cover is positioned, so it would paint over static siblings — lift them out of flow
+   order rather than the other way round. */
+.collection-card.has-cover > *:not(.collection-card-cover) {
+  position: relative;
+  z-index: 1;
+}
+
+/* …but the two that were already absolute must stay absolute, and above the name, which
+   otherwise ties on z-index and swallows the click by DOM order. */
+.collection-card.has-cover > .collection-card-menu,
+.collection-card.has-cover > .collection-ctx {
+  position: absolute;
+  z-index: 2;
+}
+
+.collection-card.has-cover,
+.collection-card.has-cover .collection-card-name,
+.collection-card.has-cover .collection-card-count {
+  color: #fff;
+}
+
+.collection-card.has-cover .collection-card-preview {
+  background: color-mix(in srgb, #000 34%, transparent);
+  color: color-mix(in srgb, #fff 82%, transparent);
+}
+
+.collection-card.has-cover .collection-card-menu:hover {
+  background: color-mix(in srgb, #fff 24%, transparent);
+}
+
+/* The name is the card. Centred, with room either side so the ⋯ never crowds it. */
+.collection-card-name {
+  padding: 2px 26px 4px;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 26px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The stacked previews say what is inside without opening it. */
+.collection-card-previews {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.collection-card-preview {
+  display: -webkit-box;
+  padding: 7px 9px;
+  border-radius: var(--squircle-xs);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 17px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.collection-card-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.collection-card-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  opacity: 0;
+  place-items: center;
+  transition: opacity var(--motion-standard) ease;
+}
+
+.collection-card:hover .collection-card-menu {
+  opacity: 1;
+}
+
+.collection-card-menu:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.collection-card-menu svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.collection-ctx {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  left: auto;
+}
+
+/* The menu is its own surface — a cover's white text must not follow it in. */
+.collection-ctx,
+.collection-ctx button {
+  color: var(--text);
+}
+
+.collection-ctx button:hover:not(:disabled) {
+  color: #fff;
+}
+
+.collection-card-new {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--separator);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+.collection-card-new:hover {
+  border-color: var(--text-secondary);
+  box-shadow: none;
+  color: var(--text);
+}
+
+.collection-new-plus {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.collection-new-label {
+  font-size: 13px;
+}
+
+.collection-card-new.is-editing {
+  padding: 16px;
+  cursor: default;
+}
+
+.collection-new-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  text-align: center;
+  outline: none;
+}
+
+/* Drilled into one collection: a back link and the folder's name above its saves. */
+.collection-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 24px 14px;
+  max-width: var(--board-width, 1200px);
+  margin: 0 auto;
+}
+
+.collection-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px 5px 6px;
+  border: 0;
+  border-radius: var(--squircle-pill);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.collection-back:hover {
+  color: var(--text);
+}
+
+.collection-back svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.collection-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 590;
+  letter-spacing: -0.01em;
 }

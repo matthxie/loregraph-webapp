@@ -126,20 +126,22 @@ describe("HistoryPage edge cases", () => {
       .sort();
 
   const folderRows = () =>
-    [...document.querySelectorAll(".spots-sidebar .spot-row")].map((node) => ({
-      name: node.querySelector(".spot-row-name")?.textContent,
-      selected: node.classList.contains("selected"),
-    }));
+    [...document.querySelectorAll(".collections-grid .collection-card:not(.collection-card-new)")]
+      .map((node) => ({
+        name: node.querySelector(".collection-card-name")?.textContent,
+        selected: node.classList.contains("selected"),
+      }));
 
   const openSidebar = async () => {
-    const toggle = document.querySelector('[aria-label="Folders"]') as HTMLButtonElement | null;
-    expect(toggle, "folders toggle should be in the header").not.toBeNull();
-    if (document.querySelector(".spots-sidebar.open") === null) await act(async () => toggle!.click());
+    const tab = [...document.querySelectorAll<HTMLButtonElement>(".board-tab")]
+      .find((button) => button.textContent === "Collections");
+    expect(tab, "Collections tab should be in the header").toBeTruthy();
+    if (!tab!.classList.contains("active")) await act(async () => tab!.click());
   };
 
   const clickChip = async (name: string, opts: { shift?: boolean } = {}) => {
     await openSidebar();
-    const row = document.querySelector(`[aria-label="spot-${name}"]`) as HTMLButtonElement | null;
+    const row = document.querySelector(`[aria-label="collection-${name}"]`) as HTMLButtonElement | null;
     expect(row, `folder ${name} should exist`).not.toBeNull();
     await act(async () => {
       row!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: opts.shift ?? false }));
@@ -204,23 +206,27 @@ describe("HistoryPage edge cases", () => {
     await render();
     expect(visibleCards().length).toBe(2);
 
-    // Select the bio folder.
+    // Open the bio collection.
     await clickChip("bio");
-    expect(folderRows().find((row) => row.name === "bio")?.selected).toBe(true);
+    expect(document.querySelector(".collection-title")?.textContent).toBe("bio");
     expect(visibleCards()).toEqual([`history-card-${bioCard.id}`]);
 
     // Now remove the bio tag from the card (simulating deletion).
     setUserTags({ [coffeeCard.id]: ["coffee"] }); // bio card no longer tagged
     await render(); // Re-render to pick up the tag change
 
-    // The folder is still there — now empty. Nothing removes a folder but Delete folder, so
-    // the selection holds and the board honestly shows the empty folder.
-    expect(folderRows().find((row) => row.name === "bio")?.selected).toBe(true);
+    // The collection is still there — now empty. Nothing removes one but Delete collection, so
+    // it stays open and honestly shows nothing inside.
+    expect(document.querySelector(".collection-title")?.textContent).toBe("bio");
     expect(visibleCards()).toEqual([]);
     expect(document.body.textContent).toContain("No cards with this tag");
 
-    // Leaving the folder puts the whole board back.
-    await clickChip("bio");
+    // Leaving it puts the whole board back.
+    await act(async () => (document.querySelector(".collection-back") as HTMLButtonElement).click());
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".board-tab")]
+        .find((button) => button.textContent === "Feed")!.click();
+    });
     expect(visibleCards()).toContain(`history-card-${coffeeCard.id}`);
   });
 
@@ -246,38 +252,7 @@ describe("HistoryPage edge cases", () => {
     ].sort());
   });
 
-  it("sidebar persistence: localStorage '1' opens on mount", async () => {
-    const row = makeRow("ep_001", "test");
-    mountGraph([row]);
-    setUserTags({ [row.id]: ["folder"] });
 
-    // Start with sidebar preference = "1" (open).
-    localStorage.setItem("graph.history.folders-sidebar.v1", "1");
-
-    await render();
-    await act(() => new Promise(resolve => setTimeout(resolve, 100)));
-
-    // Sidebar should be open because localStorage says "1".
-    expect(document.querySelector(".spots-sidebar")?.classList.contains("open")).toBe(true);
-    expect(document.querySelector(".history-page")?.classList.contains("sidebar-open")).toBe(true);
-  });
-
-  it("sidebar persistence: localStorage '0' keeps sidebar closed on mount", async () => {
-    const row = makeRow("ep_001", "test");
-    mountGraph([row]);
-    setUserTags({ [row.id]: ["folder"] });
-
-    // Sidebar preference = "0" (closed).
-    localStorage.setItem("graph.history.folders-sidebar.v1", "0");
-
-    await render();
-    await act(() => new Promise(resolve => setTimeout(resolve, 100)));
-
-    // Sidebar should be closed.
-    expect(document.querySelector(".spots-sidebar")?.classList.contains("open")).toBe(false);
-    expect(document.querySelector(".spots-sidebar")?.getAttribute("aria-hidden")).toBe("true");
-    expect(document.querySelector(".history-page")?.classList.contains("sidebar-open")).toBe(false);
-  });
 
   it("empty-state wording: two tags say 'these tags'; one tag says 'this tag'", async () => {
     const card1 = makeRow("ep_001", "tagged");
@@ -338,22 +313,13 @@ describe("HistoryPage edge cases", () => {
     await render({ pendingEntries: [pending] });
     await act(() => new Promise(resolve => setTimeout(resolve, 100)));
 
-    // Open sidebar and select "bio" folder.
-    await openSidebar();
-    const bioRow = document.querySelector(`[aria-label="spot-bio"]`) as HTMLButtonElement | null;
-    expect(bioRow).not.toBeNull();
-    await act(async () => bioRow!.click());
-
-    // Pending should be visible because it's tagged with "bio" and "bio" is selected.
+    // Open the "bio" collection: the pending card is filed there, so it shows.
+    await clickChip("bio");
     expect(visiblePendingCards()).toContain(`processing-card-${pending.id}`);
 
-    // Deselect "bio" and select "coffee" instead.
-    const coffeeRow = document.querySelector(`[aria-label="spot-coffee"]`) as HTMLButtonElement | null;
-    expect(coffeeRow).not.toBeNull();
-    await act(async () => bioRow!.click()); // deselect bio
-    await act(async () => coffeeRow!.click()); // select coffee
-
-    // Pending should NOT be visible because "coffee" is selected but pending is tagged "bio".
+    // Open "coffee" instead — the pending card is filed under bio, so it drops out.
+    await act(async () => (document.querySelector(".collection-back") as HTMLButtonElement).click());
+    await clickChip("coffee");
     expect(visiblePendingCards()).not.toContain(`processing-card-${pending.id}`);
   });
 

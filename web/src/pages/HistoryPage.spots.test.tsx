@@ -39,7 +39,7 @@ const rowTea = makeRow("ep_note_0001", "morning #tea ritual", { created_at: iso(
 const rowBoth = makeRow("ep_note_0002", "#tea with #coffee later", { created_at: iso(2) });
 const rowPlain = makeRow("ep_note_0003", "grocery run", { created_at: iso(1) });
 
-describe("HistoryPage folders sidebar", () => {
+describe("HistoryPage collections", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -80,20 +80,22 @@ describe("HistoryPage folders sidebar", () => {
       .sort();
 
   const folderRows = () =>
-    [...document.querySelectorAll(".spots-sidebar .spot-row")].map((node) => ({
-      name: node.querySelector(".spot-row-name")?.textContent,
-      selected: node.classList.contains("selected"),
-    }));
+    [...document.querySelectorAll(".collections-grid .collection-card:not(.collection-card-new)")]
+      .map((node) => ({
+        name: node.querySelector(".collection-card-name")?.textContent,
+        selected: node.classList.contains("selected"),
+      }));
 
   const openSidebar = async () => {
-    const toggle = document.querySelector('[aria-label="Folders"]') as HTMLButtonElement | null;
-    expect(toggle, "folders toggle should be in the header").not.toBeNull();
-    if (document.querySelector(".spots-sidebar.open") === null) await act(async () => toggle!.click());
+    const tab = [...document.querySelectorAll<HTMLButtonElement>(".board-tab")]
+      .find((button) => button.textContent === "Collections");
+    expect(tab, "Collections tab should be in the header").toBeTruthy();
+    if (!tab!.classList.contains("active")) await act(async () => tab!.click());
   };
 
   const clickChip = async (name: string, opts: { shift?: boolean } = {}) => {
     await openSidebar();
-    const row = document.querySelector(`[aria-label="spot-${name}"]`) as HTMLButtonElement | null;
+    const row = document.querySelector(`[aria-label="collection-${name}"]`) as HTMLButtonElement | null;
     expect(row, `folder ${name} should exist`).not.toBeNull();
     await act(async () => {
       row!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: opts.shift ?? false }));
@@ -102,13 +104,13 @@ describe("HistoryPage folders sidebar", () => {
 
   const openRowMenu = async (name: string) => {
     await openSidebar();
-    const button = document.querySelector(`[aria-label="More actions for ${name}"]`) as HTMLButtonElement | null;
-    expect(button, `folder ${name}'s menu button should exist`).not.toBeNull();
+    const button = document.querySelector(`[aria-label="collection-menu-${name}"]`) as HTMLElement | null;
+    expect(button, `collection ${name}'s menu button should exist`).not.toBeNull();
     await act(async () => button!.click());
   };
 
   const clickMenuItem = async (label: string) => {
-    const item = [...document.querySelectorAll(".spot-row-menu-list button")]
+    const item = [...document.querySelectorAll(".collection-ctx button")]
       .find((button) => button.textContent === label) as HTMLButtonElement | undefined;
     expect(item, `menu item "${label}" should exist`).not.toBeUndefined();
     await act(async () => item!.click());
@@ -143,21 +145,21 @@ describe("HistoryPage folders sidebar", () => {
     vi.useRealTimers();
   });
 
-  it("lists one row per folder, count-desc then alphabetical; no counts shown; no folders → empty state", async () => {
+  it("lists one card per collection, count-desc then alphabetical, with an empty state", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
     setUserTags({ [rowPlain.id]: ["coffee"] });
     await render();
-    // Closed by default; the header toggle opens it and the board shifts over.
-    expect(document.querySelector(".spots-sidebar")?.classList.contains("open")).toBe(false);
+    // Feed is the default tab; Collections swaps the saves for folder cards.
+    expect(document.querySelector(".collections-grid")).toBeNull();
     await openSidebar();
-    expect(document.querySelector(".history-page")?.classList.contains("sidebar-open")).toBe(true);
+    expect(document.querySelector(".collections-grid")).not.toBeNull();
     // tea: rowTea + rowBoth; coffee: rowBoth hashtag + rowPlain manual add. Tie → alphabetical.
     expect(folderRows()).toEqual([
       { name: "coffee", selected: false },
       { name: "tea", selected: false },
     ]);
-    // The card count is not rendered beside a folder.
-    expect(document.querySelector(".spot-row-count")).toBeNull();
+    // Each card says how much is inside.
+    expect(document.body.textContent).toContain("2 saves");
 
     // A board with no user-created tags shows the how-to empty state (entities don't count).
     await act(async () => root.unmount());
@@ -169,66 +171,40 @@ describe("HistoryPage folders sidebar", () => {
     await render();
     await openSidebar();
     expect(folderRows()).toEqual([]);
-    expect(document.querySelector(".spots-sidebar-empty")?.textContent).toContain("No folders yet");
+    expect(document.body.textContent).toContain("No collections yet");
   });
 
-  it("sort toggles reorder folders: A–Z default, newest by freshest card, oldest reversed", async () => {
+
+  it("opening a collection shows its saves; Back returns to the grid", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
     setUserTags({ [rowPlain.id]: ["coffee"] });
     await render();
+    expect(visibleCards()).toEqual([
+      `history-card-${rowTea.id}`,
+      `history-card-${rowBoth.id}`,
+      `history-card-${rowPlain.id}`,
+    ].sort());
+
+    // The grid replaces the saves outright.
     await openSidebar();
-    const names = () => folderRows().map((row) => row.name);
-    // The sort options live behind the hover filter — open it, then pick.
-    const openFilterMenu = async () => {
-      await act(async () => (document.querySelector('[aria-label="Sort folders"]') as HTMLButtonElement).click());
-    };
-    const pickSort = async (mode: string) => {
-      await openFilterMenu();
-      await act(async () => (document.querySelector(`[aria-label="sort-folders-${mode}"]`) as HTMLButtonElement).click());
-    };
-    // Default alphabetical.
-    await openFilterMenu();
-    expect(document.querySelector('[aria-label="sort-folders-alpha"]')?.getAttribute("aria-checked")).toBe("true");
-    await openFilterMenu(); // close it again (toggle)
-    expect(names()).toEqual(["coffee", "tea"]);
-    // Newest: tea's freshest card (rowTea, 0.5d) beats coffee's (rowPlain, 1d).
-    await pickSort("new");
-    expect(names()).toEqual(["tea", "coffee"]);
-    // Oldest: reversed.
-    await pickSort("old");
-    expect(names()).toEqual(["coffee", "tea"]);
-    // The choice persists in localStorage for the next mount.
-    expect(localStorage.getItem("graph.history.folders-sort.v1")).toBe("old");
-  });
+    expect(visibleCards()).toEqual([]);
 
-  it("plain click goes to one folder; shift-click intersects; clicking the active one clears", async () => {
-    mountGraph([rowTea, rowBoth, rowPlain]);
-    setUserTags({ [rowPlain.id]: ["coffee"] });
-    await render();
-    expect(visibleCards()).toEqual([
-      `history-card-${rowTea.id}`,
-      `history-card-${rowBoth.id}`,
-      `history-card-${rowPlain.id}`,
-    ].sort());
-
-    // Plain click GOES TO tea.
+    // Opening one shows just its saves, under its name.
     await clickChip("tea");
-    expect(folderRows().find((row) => row.name === "tea")?.selected).toBe(true);
+    expect(document.querySelector(".collection-title")?.textContent).toBe("tea");
     expect(visibleCards()).toEqual([`history-card-${rowTea.id}`, `history-card-${rowBoth.id}`].sort());
+    expect(document.querySelector(".collections-grid")).toBeNull();
 
-    // Shift-click ADDS coffee — now an intersection, only the card carrying BOTH stays.
-    await clickChip("coffee", { shift: true });
-    expect(folderRows().find((row) => row.name === "coffee")?.selected).toBe(true);
-    expect(visibleCards()).toEqual([`history-card-${rowBoth.id}`]);
+    // Back returns to the grid.
+    await act(async () => (document.querySelector(".collection-back") as HTMLButtonElement).click());
+    expect(document.querySelector(".collections-grid")).not.toBeNull();
+    expect(visibleCards()).toEqual([]);
 
-    // Plain click on coffee REPLACES the selection with just coffee (tea drops).
-    await clickChip("coffee");
-    expect(folderRows().find((row) => row.name === "tea")?.selected).toBe(false);
-    expect(folderRows().find((row) => row.name === "coffee")?.selected).toBe(true);
-    expect(visibleCards()).toEqual([`history-card-${rowBoth.id}`, `history-card-${rowPlain.id}`].sort());
-
-    // Plain click on the sole active folder clears the filter → full board.
-    await clickChip("coffee");
+    // Feed is unfiltered again.
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".board-tab")]
+        .find((button) => button.textContent === "Feed")!.click();
+    });
     expect(visibleCards()).toEqual([
       `history-card-${rowTea.id}`,
       `history-card-${rowBoth.id}`,
@@ -236,12 +212,12 @@ describe("HistoryPage folders sidebar", () => {
     ].sort());
   });
 
-  it("New folder creates an empty folder: sanitized name, listed, selectable, autocompletable", async () => {
+  it("New collection creates an empty one: sanitized name, listed, openable, autocompletable", async () => {
     mountGraph([rowPlain]);
     await render();
     await openSidebar();
 
-    await act(async () => (document.querySelector('[aria-label="new-folder"]') as HTMLButtonElement).click());
+    await act(async () => (document.querySelector('[aria-label="new-collection"]') as HTMLButtonElement).click());
     const input = document.querySelector('[aria-label="new-folder-name"]') as HTMLInputElement;
     expect(input).not.toBeNull();
     // Folder names can never contain a slash — the character doesn't type.
@@ -260,39 +236,12 @@ describe("HistoryPage folders sidebar", () => {
     expect(getCreatedFolders()).toEqual(["reading-list"]);
     expect(getKnownTags()).toContain("reading-list");
 
-    // Selecting it filters the board to its (zero) cards.
+    // Opening it shows an empty collection.
     await clickChip("reading-list");
+    expect(document.querySelector(".collection-title")?.textContent).toBe("reading-list");
     expect(visibleCards()).toEqual([]);
   });
 
-  it("drag-resizing the sidebar clamps to the sort-chips floor and persists the width", async () => {
-    mountGraph([rowTea, rowBoth, rowPlain]);
-    setUserTags({ [rowPlain.id]: ["coffee"] });
-    await render();
-    await openSidebar();
-
-    const sidebar = () => document.querySelector(".spots-sidebar") as HTMLElement;
-    const handle = document.querySelector('[aria-label="resize-folders-sidebar"]') as HTMLElement;
-    expect(handle).not.toBeNull();
-
-    const drag = async (toX: number) => {
-      await act(async () => {
-        handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
-        window.dispatchEvent(new PointerEvent("pointermove", { clientX: toX }));
-        window.dispatchEvent(new PointerEvent("pointerup", {}));
-      });
-    };
-
-    await drag(320);
-    expect(sidebar().style.width).toBe("320px");
-    expect(document.querySelector<HTMLElement>(".history-page")?.style.marginLeft).toBe("320px");
-    expect(localStorage.getItem("graph.history.folders-sidebar-width.v1")).toBe("320");
-
-    // Below the floor (the sort chips must always fit) → clamps to 190.
-    await drag(80);
-    expect(sidebar().style.width).toBe("190px");
-    expect(localStorage.getItem("graph.history.folders-sidebar-width.v1")).toBe("190");
-  });
 
   it("keeps a folder listed once its cards arrive, and keeps it standing when they leave", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
@@ -310,7 +259,7 @@ describe("HistoryPage folders sidebar", () => {
     expect(getCreatedFolders()).toContain("tea");
   });
 
-  it("sidebar selection composes with /tag search terms and feeds the no-matches empty state", async () => {
+  it("collection selection composes with /tag search terms and feeds the no-matches empty state", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
     await render({ searchQuery: "/coffee" });
     expect(visibleCards()).toEqual([`history-card-${rowBoth.id}`]);
@@ -319,14 +268,13 @@ describe("HistoryPage folders sidebar", () => {
     await clickChip("tea");
     expect(visibleCards()).toEqual([`history-card-${rowBoth.id}`]);
 
-    // An impossible combination (tea still selected in the sidebar) empties the board and
-    // the no-matches empty state accounts for the sidebar selection too.
+    // An impossible combination empties the board, and the no-matches state accounts for it.
     await render({ searchQuery: "/coffee /ritual" }); // no card carries a "ritual" tag
     expect(visibleCards()).toEqual([]);
     expect(document.body.textContent).toContain("No cards with these tags");
   });
 
-  it("deletes a folder after confirming and keeps every entry that was in it", async () => {
+  it("deletes a collection after confirming and keeps every entry that was in it", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
     setUserTags({ [rowTea.id]: ["tea"], [rowBoth.id]: ["tea", "coffee"], [rowPlain.id]: ["coffee"] });
     const episodeDelete = vi.fn().mockResolvedValue(undefined);
@@ -341,32 +289,37 @@ describe("HistoryPage folders sidebar", () => {
     await render({ snapshot: { engine: { state: "running" }, capabilities: { episodeDelete: true } } as StatusSnapshot });
 
     await openRowMenu("tea");
-    await clickMenuItem("Delete folder…");
-    expect(document.body.textContent).toContain("Delete the folder “tea”?");
+    await clickMenuItem("Delete collection");
+    expect(document.body.textContent).toContain("Delete the collection “tea”?");
     expect(document.body.textContent).toContain("Its 2 entries stay on the board");
 
     const confirm = [...document.querySelectorAll(".overlay-panel button")]
-      .find((button) => button.textContent === "Delete folder") as HTMLButtonElement;
+      .find((button) => button.textContent === "Delete collection") as HTMLButtonElement;
     await act(async () => confirm.click());
 
-    // The folder is gone; not one entry was deleted, and a card filed elsewhere keeps that filing.
+    // The collection is gone; not one entry was deleted, and a card filed elsewhere keeps it.
     expect(episodeDelete).not.toHaveBeenCalled();
+    expect(getUserTags()).toEqual({ [rowBoth.id]: ["coffee"], [rowPlain.id]: ["coffee"] });
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".board-tab")]
+        .find((button) => button.textContent === "Feed")!.click();
+    });
     expect(visibleCards()).toEqual(
       [`history-card-${rowTea.id}`, `history-card-${rowBoth.id}`, `history-card-${rowPlain.id}`].sort(),
     );
-    expect(getUserTags()).toEqual({ [rowBoth.id]: ["coffee"], [rowPlain.id]: ["coffee"] });
     await openSidebar();
     expect(folderRows()).toEqual([{ name: "coffee", selected: false }]);
   });
 
-  it("offers deleting the folder as the row menu's only action, ungated by the engine", async () => {
+  it("offers a cover and delete in the card menu, with delete ungated by the engine", async () => {
     mountGraph([rowTea, rowBoth, rowPlain]);
     await render(); // default snapshot: capabilities: {} → the engine can't delete entries
     await openRowMenu("tea");
-    const items = [...document.querySelectorAll<HTMLButtonElement>(".spot-row-menu-list button")];
-    expect(items.map((item) => item.textContent)).toEqual(["Delete folder…"]);
-    // Nothing is destroyed by unfiling, so the action doesn't wait on an engine capability.
-    expect(items[0]!.disabled).toBe(false);
+    const items = [...document.querySelectorAll<HTMLButtonElement>(".collection-ctx button")];
+    // No cover set yet, so "Remove cover" stays out of the way.
+    expect(items.map((item) => item.textContent)).toEqual(["Choose cover…", "Delete collection"]);
+    // Nothing is destroyed by unfiling, so deleting doesn't wait on an engine capability.
+    expect(items[1]!.disabled).toBe(false);
   });
 
   it("puts each card's folders on the card, collapsing four or more to two plus a count", async () => {

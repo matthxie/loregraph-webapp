@@ -54,13 +54,17 @@ import {
   useUserTags,
 } from "../lib/tags";
 import { reconcilePins, updatePins, usePins } from "../lib/pins";
+import { pruneCovers } from "../lib/covers";
 import { CardDevView } from "../components/CardDevView";
 import { CardFolderPicker } from "../components/CardFolderPicker";
 import { CardFolders } from "../components/CardFolders";
 import { RichLinkPreview } from "../components/LinkPreview";
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SpotsSidebar, spotCounts } from "../components/SpotsSidebar";
+import { spotCounts } from "../components/SpotsSidebar";
+import { CollectionsBoard } from "../components/CollectionsBoard";
 import type { EpisodeEdit } from "../App";
 import type { PendingWriteEntry } from "./InputPage";
+
+export type BoardTab = "feed" | "collections";
 
 export interface EpisodeScrollRequest {
   id: string;
@@ -79,12 +83,6 @@ const SORT_LABELS: Record<HistorySortMode, string> = {
   old: "Oldest first",
   random: "Random",
 };
-
-/** Folders sidebar open/closed, persisted across sessions. */
-const SIDEBAR_OPEN_KEY = "graph.history.folders-sidebar.v1";
-
-/** Folders sidebar width in px, persisted across sessions (drag the right edge). */
-const SIDEBAR_WIDTH_KEY = "graph.history.folders-sidebar-width.v1";
 
 function cardHasSelectedText(card: HTMLElement): boolean {
   const selection = window.getSelection();
@@ -293,6 +291,10 @@ export function HistoryPage({
   const [rowsTotal, setRowsTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<HistorySortMode>("shuffle");
+  /** Feed = the sampled board; Collections = one card per folder. */
+  const [tab, setTab] = useState<BoardTab>("feed");
+  const tabRefs = useRef<Record<BoardTab, HTMLButtonElement | null>>({ feed: null, collections: null });
+  const [tabIndicator, setTabIndicator] = useState<React.CSSProperties>({ opacity: 0 });
   /** Re-rolled only by the Shuffle button, so the sample holds still across refetches. */
   const [shuffleSeed, setShuffleSeed] = useState(() => Math.random().toString(36).slice(2));
   const [filterOpen, setFilterOpen] = useState(false);
@@ -400,6 +402,20 @@ export function HistoryPage({
       setVisibilityOpen(false);
     }, 200);
   }, [cancelVisibilityClose]);
+
+  // Track the active tab's box. Re-measured on resize and once fonts land, since both change
+  // the label's width after the first paint.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const node = tabRefs.current[tab];
+      if (!node) return;
+      setTabIndicator({ left: node.offsetLeft, width: node.offsetWidth });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    void document.fonts?.ready.then(measure).catch(() => undefined);
+    return () => window.removeEventListener("resize", measure);
+  }, [tab]);
 
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
@@ -510,6 +526,7 @@ export function HistoryPage({
     const existing = new Set(spots.map((spot) => spot.name));
     pruneHiddenFolders(existing);
     pruneOnlyFolders(existing);
+    pruneCovers(existing);
   }, [spots]);
   // A folder exists until it is deleted. Every folder a card carries is recorded in the folder
   // list, so unfiling the last card (or deleting that card) leaves the folder behind, empty —
@@ -518,44 +535,6 @@ export function HistoryPage({
   useEffect(() => {
     registerFolders(Object.values(userTags).flat());
   }, [userTags]);
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    try {
-      return localStorage.getItem(SIDEBAR_OPEN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleSidebar = useCallback(() => {
-    setSidebarOpen((open) => {
-      try {
-        localStorage.setItem(SIDEBAR_OPEN_KEY, open ? "0" : "1");
-      } catch {
-        // Storage disabled — the toggle still works for this session.
-      }
-      return !open;
-    });
-  }, []);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-      return Number.isFinite(stored) && stored >= MIN_SIDEBAR_WIDTH
-        ? Math.min(MAX_SIDEBAR_WIDTH, stored)
-        : 220;
-    } catch {
-      return 220;
-    }
-  });
-  const persistSidebarWidth = useCallback(() => {
-    setSidebarWidth((width) => {
-      try {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
-      } catch {
-        // Storage disabled — the width still holds for this session.
-      }
-      return width;
-    });
-  }, []);
-
   const selectSpot = useCallback((name: string, additive: boolean) => {
     setSelectedSpots((current) => {
       // Shift-click: toggle this folder in/out of the running intersection.
@@ -582,6 +561,10 @@ export function HistoryPage({
   // shell so the composer can pre-fill `/folder`; an intersection of several (or none) is not a
   // single home to file into, so it reports null.
   const activeFolder = selectedSpots.length === 1 ? selectedSpots[0] ?? null : null;
+  /** The collection being viewed, when the Collections tab has drilled into one. */
+  const openCollection = tab === "collections" ? activeFolder : null;
+  /** The notes boards render on the feed, and inside an opened collection. */
+  const showNotes = tab === "feed" || openCollection !== null;
   useEffect(() => {
     onActiveFolderChange?.(activeFolder);
   }, [activeFolder, onActiveFolderChange]);
@@ -797,7 +780,7 @@ export function HistoryPage({
   }, [cancelFilterClose, closeFilter, cancelVisibilityClose, closeVisibility]);
 
   // The width the board will settle at, known the instant the drawer is toggled.
-  const width = Math.max(240, containerWidth - (sidebarOpen ? sidebarWidth : 0));
+  const width = Math.max(240, containerWidth);
   const columns = columnCountForWidth(width);
   /**
    * A column is also the text's measure, so it is capped at a readable line (~52 characters
@@ -1191,18 +1174,33 @@ export function HistoryPage({
     <>
       {createPortal(
         <div className="history-toolbar notes-history-toolbar">
-        {/* Folder toggle rides the header's left side, right of the traffic lights. */}
-        <button
-          type="button"
-          className={`history-folders-button${sidebarOpen ? " active" : ""}`}
-          aria-label="Folders"
-          aria-pressed={sidebarOpen}
-          onClick={toggleSidebar}
-        >
-          <svg className="folder-glyph" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          </svg>
-        </button>
+        <div className="board-tabs" role="tablist" aria-label="Board">
+          {(["feed", "collections"] as const).map((option) => (
+            <button
+              type="button"
+              key={option}
+              role="tab"
+              ref={(node) => {
+                tabRefs.current[option] = node;
+              }}
+              aria-selected={tab === option}
+              className={`board-tab${tab === option ? " active" : ""}`}
+              onClick={() => {
+                setTab(option);
+                // Leaving Collections drops any folder you had drilled into.
+                if (option === "feed") setSelectedSpots([]);
+              }}
+            >
+              {option === "feed" ? "Feed" : "Collections"}
+            </button>
+          ))}
+          {/* Sized to the active tab: the labels have different widths, so a fixed half
+              can't fit either one. */}
+          <span className="board-tabs-indicator" style={tabIndicator} aria-hidden="true" />
+        </div>
+        {/* Sorting and folder visibility describe the feed, so they follow it. */}
+        {tab === "feed" && (
+        <>
         <div
           className="history-filter"
           ref={filterRef}
@@ -1344,6 +1342,8 @@ export function HistoryPage({
             </div>
           )}
         </div>
+        </>
+        )}
         <button
           type="button"
           className="history-settings-button"
@@ -1359,23 +1359,33 @@ export function HistoryPage({
         document.body,
       )}
 
-      <SpotsSidebar
-        open={sidebarOpen}
-        spots={spots}
-        selected={selectedSpots}
-        width={sidebarWidth}
-        onSelect={selectSpot}
-        onResize={setSidebarWidth}
-        onResizeEnd={persistSidebarWidth}
-        onCreate={addCreatedFolder}
-        onDeleteFolder={requestDeleteFolder}
-      />
-
       <div
-        className={`history-page${sidebarOpen ? " sidebar-open" : ""}`}
+        className="history-page"
         ref={wrapRef}
-        style={{ marginLeft: sidebarOpen ? sidebarWidth : 0, "--board-width": `${boardWidth}px` } as React.CSSProperties}
+        style={{ "--board-width": `${boardWidth}px` } as React.CSSProperties}
       >
+      {/* Collections: folder cards, until one is opened — then the notes inside it. */}
+      {tab === "collections" && !openCollection && (
+        <CollectionsBoard
+          spots={spots}
+          userTags={displayTags}
+          loadedRows={rows ?? []}
+          onOpen={(name) => setSelectedSpots([name])}
+          onCreate={addCreatedFolder}
+          onDelete={requestDeleteFolder}
+        />
+      )}
+      {tab === "collections" && openCollection && (
+        <div className="collection-header">
+          <button type="button" className="collection-back" onClick={() => setSelectedSpots([])}>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="m12 4.5-5 5.5 5 5.5" />
+            </svg>
+            Collections
+          </button>
+          <h2 className="collection-title">{openCollection}</h2>
+        </div>
+      )}
       {error && <p className="error-text" style={{ padding: "12px 24px" }}>{error}</p>}
       {!engineRunning && !error && <p className="muted" style={{ padding: "12px 24px" }}>Waiting for the engine…</p>}
       {searching && rows && filteredRows.length === 0 && (rows.length > 0 || pendingEntries.length > 0) && (
@@ -1390,7 +1400,7 @@ export function HistoryPage({
           <p className="muted">No card carries {activeTags.map((tag) => `/${tag}`).join(" + ")}. Add the tag{activeTags.length === 1 ? "" : "s"} to a note, or deselect one.</p>
         </div>
       )}
-      {pinnedBoardItems.length > 0 && (
+      {showNotes && pinnedBoardItems.length > 0 && (
         <div className="day-section pinned-section">
           <div className="day-header pinned-header">
             <svg className="pinned-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1407,7 +1417,7 @@ export function HistoryPage({
           />
         </div>
       )}
-      {daySections.length > 0 && (
+      {showNotes && daySections.length > 0 && (
         <>
           {daySections.map((section) => (
             <div key={section.key} className={section.key === todayKey ? "day-section today" : "day-section"}>
@@ -1427,7 +1437,7 @@ export function HistoryPage({
           ))}
         </>
       )}
-      {mode === "random" && randomBoardItems.length > 0 && (
+      {showNotes && mode === "random" && randomBoardItems.length > 0 && (
         <div className="random-board">
           <MasonryBoard
             items={randomBoardItems}
@@ -1438,7 +1448,7 @@ export function HistoryPage({
           />
         </div>
       )}
-      {mode === "shuffle" && !searching && boardItems.length > 0 && (
+      {showNotes && mode === "shuffle" && !searching && boardItems.length > 0 && (
         <div className="random-board shuffle-board">
           <MasonryBoard
             items={boardItems}
@@ -1549,10 +1559,10 @@ export function HistoryPage({
         >
           <div className="overlay-panel" style={{ width: 380, maxHeight: 240 }} onClick={(e) => e.stopPropagation()}>
             <div className="overlay-body">
-              <h3 style={{ marginTop: 0 }}>Delete the folder “{confirmDeleteFolder.name}”?</h3>
+              <h3 style={{ marginTop: 0 }}>Delete the collection “{confirmDeleteFolder.name}”?</h3>
               <p className="muted">
                 {confirmDeleteFolder.count === 0
-                  ? "The folder is empty — nothing else changes."
+                  ? "The collection is empty — nothing else changes."
                   : `Its ${confirmDeleteFolder.count} ${confirmDeleteFolder.count === 1 ? "entry stays" : "entries stay"} on the board; they just won’t be filed here anymore.`}
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -1560,7 +1570,7 @@ export function HistoryPage({
                   Cancel
                 </button>
                 <button className="btn danger" onClick={doDeleteFolderConfirmed}>
-                  Delete folder
+                  Delete collection
                 </button>
               </div>
             </div>
